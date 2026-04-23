@@ -179,15 +179,19 @@ class VoiceInput(_InputMode):
             self._followup_until = 0.0
             try:
                 if not in_followup:
+                    print("[voice] waiting for wake word...")
                     self._listener.wait_for_wake(
                         read_chunk=self._read_wake_chunk
                     )
                     if self._stop.is_set():
                         return
+                    print("[voice] wake detected — capturing...")
                     capture_kwargs = {}
                 else:
-                    # Skip wake-word; give the user `_followup_window_sec`
-                    # to start a follow-up or we bail back to wake-word.
+                    print(
+                        f"[voice] follow-up ({self._followup_window_sec:g}s) "
+                        "— listening without wake word..."
+                    )
                     capture_kwargs = {
                         "start_timeout_ms": int(
                             self._followup_window_sec * 1000
@@ -197,6 +201,7 @@ class VoiceInput(_InputMode):
                 audio = self._capture_utterance(
                     read_chunk=self._read_capture_chunk, **capture_kwargs
                 )
+                print(f"[voice] captured {len(audio) / 16_000:.2f}s — transcribing...")
                 text = self._transcribe(audio)
             except BaseException as exc:
                 # BaseException catches test sentinels (which inherit from it)
@@ -213,7 +218,9 @@ class VoiceInput(_InputMode):
             if not text:
                 # VAD fired but Whisper heard nothing intelligible — just go
                 # back to listening; don't confuse the agent with empty input.
+                print("[voice] (no speech detected / empty transcript)")
                 continue
+            print(f"[voice] heard: {text!r}")
             self._queue.put(text)
 
 

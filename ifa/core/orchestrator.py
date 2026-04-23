@@ -100,6 +100,10 @@ def run() -> None:
         user_input = input_mode.get().strip()
         if not user_input:
             continue
+        # Echo so you can see what voice mode heard before agent_turn runs.
+        # Cheap in text mode (you typed it), but critical for debugging
+        # voice transcription issues.
+        print(f"You: {user_input}")
         if user_input.lower() in ["exit", "quit"]:
             break
 
