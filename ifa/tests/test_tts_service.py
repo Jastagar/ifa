@@ -4,6 +4,7 @@ Run: python -m unittest ifa.tests.test_tts_service -v
 """
 import ast
 import base64
+import os
 import pathlib
 import threading
 import unittest
@@ -159,6 +160,158 @@ class TTSServiceThreadSafetyTests(unittest.TestCase):
                 self.assertFalse(t.is_alive())
 
         self.assertEqual(sorted(calls), [f"from_thread_{i}" for i in range(5)])
+
+
+class TTSServiceIsSpeakingTests(unittest.TestCase):
+    """Unit 1 (Stage 2): `is_speaking` flag + cooldown for voice mute.
+
+    The wake-word listener (Unit 2) reads `is_speaking` on every audio
+    frame; these tests lock in the semantics it depends on.
+    """
+
+    def test_is_speaking_false_at_construction(self):
+        tts = TTSService()
+        self.assertFalse(tts.is_speaking)
+
+    def test_is_speaking_true_during_subprocess_call(self):
+        """While subprocess.run is executing, is_speaking must be True."""
+        tts = TTSService()
+        observed = []
+
+        def fake_run(*_args, **_kwargs):
+            observed.append(tts.is_speaking)
+
+        with patch(
+            "ifa.services.tts_service.subprocess.run", side_effect=fake_run
+        ), patch("ifa.services.tts_service.sys.platform", "linux"):
+            tts.speak("hello")
+
+        self.assertEqual(observed, [True])
+
+    def test_is_speaking_true_during_cooldown_window(self):
+        """Right after speak() returns, is_speaking stays True (cooldown)."""
+        tts = TTSService()
+        with patch("ifa.services.tts_service.subprocess.run"), patch(
+            "ifa.services.tts_service.sys.platform", "linux"
+        ):
+            tts.speak("hello")
+        self.assertTrue(tts.is_speaking)
+
+    def test_is_speaking_false_after_cooldown_expires(self):
+        tts = TTSService()
+        clock = [1000.0]
+
+        def fake_monotonic():
+            return clock[0]
+
+        with patch(
+            "ifa.services.tts_service.time.monotonic", side_effect=fake_monotonic
+        ), patch("ifa.services.tts_service.subprocess.run"), patch(
+            "ifa.services.tts_service.sys.platform", "linux"
+        ):
+            tts.speak("hello")
+            self.assertTrue(tts.is_speaking)
+            # advance past default 500ms cooldown
+            clock[0] += 1.0
+            self.assertFalse(tts.is_speaking)
+
+    def test_rapid_back_to_back_speak_no_false_window(self):
+        """Regression guard for the threading.Timer race.
+
+        Two speak() calls in quick succession must never produce a window
+        where is_speaking == False between them. This is the specific
+        race the monotonic-timestamp design eliminates vs. the
+        Timer + cancel() alternative.
+        """
+        tts = TTSService()
+        clock = [1000.0]
+
+        def fake_monotonic():
+            return clock[0]
+
+        with patch(
+            "ifa.services.tts_service.time.monotonic", side_effect=fake_monotonic
+        ), patch("ifa.services.tts_service.subprocess.run"), patch(
+            "ifa.services.tts_service.sys.platform", "linux"
+        ):
+            tts.speak("first")
+            self.assertTrue(tts.is_speaking)
+            # advance 100ms -- well within 500ms cooldown
+            clock[0] += 0.1
+            self.assertTrue(tts.is_speaking)
+            tts.speak("second")
+            self.assertTrue(tts.is_speaking)
+            # advance another 400ms: past first call's expiry, within second's
+            clock[0] += 0.4
+            self.assertTrue(tts.is_speaking)
+
+    def test_concurrent_speak_from_two_threads_both_tracked(self):
+        """Reminder-thread speak() + main-thread speak() both keep mute on."""
+        tts = TTSService()
+        enter_barrier = threading.Barrier(3)  # 2 threads + main test thread
+        release_gate = threading.Event()
+        observations = []
+        obs_lock = threading.Lock()
+
+        def fake_run(*_args, **_kwargs):
+            enter_barrier.wait(timeout=2.0)
+            with obs_lock:
+                observations.append(tts.is_speaking)
+            release_gate.wait(timeout=2.0)
+
+        with patch(
+            "ifa.services.tts_service.subprocess.run", side_effect=fake_run
+        ), patch("ifa.services.tts_service.sys.platform", "linux"):
+            t1 = threading.Thread(target=lambda: tts.speak("main"))
+            t2 = threading.Thread(target=lambda: tts.speak("reminder"))
+            t1.start()
+            t2.start()
+            # Sync: both threads reached fake_run with _active_count == 2
+            enter_barrier.wait(timeout=2.0)
+            release_gate.set()
+            t1.join(timeout=2.0)
+            t2.join(timeout=2.0)
+            self.assertFalse(t1.is_alive())
+            self.assertFalse(t2.is_alive())
+
+        self.assertEqual(observations, [True, True])
+
+    def test_cooldown_extends_across_back_to_back_calls(self):
+        """Back-to-back speak() calls monotonically extend _mute_until."""
+        tts = TTSService()
+        clock = [1000.0]
+
+        def fake_monotonic():
+            return clock[0]
+
+        with patch(
+            "ifa.services.tts_service.time.monotonic", side_effect=fake_monotonic
+        ), patch("ifa.services.tts_service.subprocess.run"), patch(
+            "ifa.services.tts_service.sys.platform", "linux"
+        ):
+            tts.speak("first")
+            first_mute_until = tts._mute_until
+            clock[0] += 0.2  # advance 200ms
+            tts.speak("second")
+            second_mute_until = tts._mute_until
+            self.assertGreater(second_mute_until, first_mute_until)
+
+    def test_speak_exception_still_sets_cooldown(self):
+        """If subprocess.run raises, finally block still arms the cooldown."""
+        tts = TTSService()
+        with patch(
+            "ifa.services.tts_service.subprocess.run",
+            side_effect=OSError("boom"),
+        ), patch("ifa.services.tts_service.sys.platform", "linux"):
+            tts.speak("hello")
+        self.assertTrue(tts.is_speaking)
+        self.assertEqual(tts._active_count, 0)
+
+    def test_cooldown_honors_env_var(self):
+        """IFA_TTS_COOLDOWN_MS overrides the default cooldown."""
+        with patch.dict(os.environ, {"IFA_TTS_COOLDOWN_MS": "2000"}):
+            tts = TTSService()
+        self.assertAlmostEqual(tts._cooldown_sec, 2.0, places=4)
 
 
 class ManagerDecouplingTests(unittest.TestCase):

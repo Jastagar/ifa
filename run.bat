@@ -83,10 +83,16 @@ if errorlevel 1 (
     ollama pull qwen2.5:7b-instruct || exit /b 1
 )
 
-REM -------- 5. Launch Ifa --------
+REM -------- 5. Voice-mode models pre-cached --------
+REM Explicit pre-download so runtime can run with HF_HUB_OFFLINE=1.
+REM openWakeWord (~1 MB) + faster-whisper small.en (~470 MB) — idempotent.
+set "PYTHONPATH=."
+"venv\Scripts\python.exe" -m scripts.setup_voice_models || exit /b 1
+
+REM -------- 6. Launch Ifa --------
 echo.
 echo [launch] Starting Ifa. Type 'exit' to quit.
 echo.
-set "PYTHONPATH=."
+set "HF_HUB_OFFLINE=1"
 "venv\Scripts\python.exe" -m ifa.main
 exit /b %errorlevel%

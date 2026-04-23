@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 from rich.console import Console
 
@@ -25,12 +27,41 @@ class TTSService:
 
     Thread-safety: each `speak()` call spawns a fresh subprocess, so the
     method is safe to call from daemon threads without additional gating.
+
+    Voice-input cooperation: `is_speaking` is True while a speak() call
+    is in flight AND for a short cooldown after it returns. The voice
+    wake-word loop reads this on every audio frame and drops audio while
+    it's True, so the mic can't self-trigger on Ifa's own output.
+
+    The cooldown is implemented with a monotonic expiry timestamp rather
+    than a `threading.Timer`: `Timer.cancel()` does not abort a callback
+    that has already begun running, so rapid back-to-back speak() calls
+    could expose a brief "mute off" window between the first timer's
+    clear-callback firing and the second speak()'s flag-set. The
+    timestamp approach has no such window — overlapping calls simply
+    extend `_mute_until`.
     """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active_count = 0  # in-flight speak() calls across all threads
+        self._mute_until = 0.0  # monotonic expiry for post-TTS cooldown
+        self._cooldown_sec = (
+            float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
+        )
+
+    @property
+    def is_speaking(self) -> bool:
+        """True while a speak() call is in flight or within the cooldown window."""
+        with self._lock:
+            return self._active_count > 0 or time.monotonic() < self._mute_until
 
     def speak(self, text: str) -> None:
         if not text:
             return
 
+        with self._lock:
+            self._active_count += 1
         try:
             if sys.platform == "darwin":
                 self._speak_macos(text)
@@ -46,6 +77,12 @@ class TTSService:
             )
         except Exception as exc:
             _console.print(f"[yellow]TTS failed: {exc}[/yellow]")
+        finally:
+            with self._lock:
+                self._active_count -= 1
+                self._mute_until = max(
+                    self._mute_until, time.monotonic() + self._cooldown_sec
+                )
 
     def _speak_macos(self, text: str) -> None:
         fd, aiff_path = tempfile.mkstemp(suffix=".aiff", prefix="ifa_tts_")

@@ -111,11 +111,18 @@ try {
         if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
     }
 
-    # -------- 5. Launch Ifa --------
+    # -------- 5. Voice-mode models pre-cached --------
+    # Explicit pre-download so runtime can run with HF_HUB_OFFLINE=1.
+    # openWakeWord (~1 MB) + faster-whisper small.en (~470 MB) — idempotent.
+    $env:PYTHONPATH = '.'
+    & 'venv\Scripts\python.exe' -m scripts.setup_voice_models
+    if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
+
+    # -------- 6. Launch Ifa --------
     Write-Host ''
     Write-Host "[launch] Starting Ifa. Type 'exit' to quit." -ForegroundColor Green
     Write-Host ''
-    $env:PYTHONPATH = '.'
+    $env:HF_HUB_OFFLINE = '1'
     & 'venv\Scripts\python.exe' -m ifa.main
     $rc = $LASTEXITCODE
 }
