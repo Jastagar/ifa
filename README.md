@@ -10,10 +10,11 @@ python 3.12.10
 
 ### Easy way — double-click
 
-- **Windows**: double-click `run.bat`
+- **Windows (cmd)**: double-click `run.bat`
+- **Windows (PowerShell)**: double-click `run-ps.bat` (runs `run.ps1` with `-ExecutionPolicy Bypass` so nothing needs configuring)
 - **macOS**: double-click `run.command` (first-time only: right-click → Open to bypass Gatekeeper)
 
-The launcher self-heals: it creates the Python venv, installs dependencies, starts Ollama, pulls `qwen2.5:7b-instruct` if missing, then launches Ifa. First run takes a few minutes (venv + ~5GB model download); subsequent runs are fast.
+All launchers self-heal: create the Python venv, install dependencies, start Ollama, pull `qwen2.5:7b-instruct` if missing, then launch Ifa. First run takes a few minutes (venv + ~5GB model download); subsequent runs are fast. The window always pauses at the end — read any error before closing.
 
 ### Prerequisites
 
