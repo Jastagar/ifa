@@ -35,6 +35,11 @@ mdurl==0.1.2
 mpmath==1.3.0
 multidict==6.7.1
 numpy==2.2.6
+# CUDA runtime libs for faster-whisper GPU acceleration. Pulled only on
+# Windows/Linux (no Apple-silicon CUDA). Users with AMD/no GPU can safely
+# leave them installed — stt.py falls back to CPU if CUDA init fails.
+nvidia-cublas-cu12>=12.4,<13.0; sys_platform == "win32" or sys_platform == "linux"
+nvidia-cudnn-cu12>=9.0,<10.0; sys_platform == "win32" or sys_platform == "linux"
 onnxruntime==1.23.2
 openwakeword==0.6.0
 packaging==26.1

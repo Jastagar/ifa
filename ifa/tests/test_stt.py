@@ -93,12 +93,58 @@ class TranscribeArrayTests(unittest.TestCase):
         """
         from ifa.voice.stt import transcribe_array
 
-        transcribe_array(np.zeros(100, dtype=np.float32))
+        # Force CPU path so auto→cuda-fallback doesn't confuse the assertion
+        with patch.dict(os.environ, {"IFA_WHISPER_DEVICE": "cpu"}):
+            _reset_stt_module_state()
+            transcribe_array(np.zeros(100, dtype=np.float32))
 
         args, kwargs = self.model_cls.call_args
         self.assertEqual(args[0], "small.en")  # positional, default model
         self.assertNotIn("size", kwargs)
         self.assertEqual(kwargs.get("compute_type"), "int8")
+        self.assertEqual(kwargs.get("device"), "cpu")
+
+    def test_device_auto_tries_cuda_then_falls_back_to_cpu(self):
+        """Default device='auto' should try CUDA (float16) first; on
+        failure, fall back to CPU (int8) without raising."""
+        from ifa.voice.stt import transcribe_array
+
+        # WhisperModel call log: first call raises (cuda unavailable), second succeeds (cpu)
+        call_count = [0]
+        def fake_ctor(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("no CUDA runtime")
+            return self.model_inst
+
+        self.model_cls.side_effect = fake_ctor
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("IFA_WHISPER_DEVICE", None)  # default = auto
+            _reset_stt_module_state()
+            text = transcribe_array(np.zeros(100, dtype=np.float32))
+
+        self.assertEqual(call_count[0], 2)
+        # Second call is the cpu fallback
+        second_call = self.model_cls.call_args_list[1]
+        self.assertEqual(second_call.kwargs.get("device"), "cpu")
+        self.assertEqual(second_call.kwargs.get("compute_type"), "int8")
+        # Transcription still works
+        self.assertEqual(text, "hello   world")
+
+    def test_device_cuda_explicit_raises_when_unavailable(self):
+        """If the user explicitly asks for CUDA but CUDA isn't there,
+        we should NOT silently fall back — raise so the user notices."""
+        from ifa.voice.stt import transcribe_array
+
+        self.model_cls.side_effect = RuntimeError("no CUDA runtime")
+
+        with patch.dict(os.environ, {"IFA_WHISPER_DEVICE": "cuda"}):
+            _reset_stt_module_state()
+            # Error is caught by transcribe_array's RuntimeError handler →
+            # returns empty string rather than crashing.
+            text = transcribe_array(np.zeros(100, dtype=np.float32))
+        self.assertEqual(text, "")
 
     def test_model_honors_ifa_whisper_model_env_var(self):
         from ifa.voice.stt import transcribe_array

@@ -26,15 +26,43 @@ _model: Optional[object] = None  # faster_whisper.WhisperModel, loaded lazily
 
 
 def _get_model() -> object:
-    """Load (or return) the singleton WhisperModel."""
+    """Load (or return) the singleton WhisperModel.
+
+    Device selection (``IFA_WHISPER_DEVICE``):
+      - ``auto`` (default): try CUDA first (float16); fall back to CPU (int8)
+      - ``cuda``: CUDA (float16); raises if unavailable
+      - ``cpu``: CPU (int8)
+
+    CUDA requires ``nvidia-cublas-cu12`` + ``nvidia-cudnn-cu12`` (shipped
+    on Windows/Linux via requirements.txt); on macOS we stay on CPU.
+    """
     global _model
     if _model is None:
         from faster_whisper import WhisperModel
 
         model_name = os.environ.get("IFA_WHISPER_MODEL", "small.en")
+        device = os.environ.get("IFA_WHISPER_DEVICE", "auto").lower()
+
         # NOTE: first arg is ``model_size_or_path`` (positional). There
         # is no keyword ``size=``; passing size= as kwarg raises TypeError.
+        if device in ("auto", "cuda"):
+            try:
+                _model = WhisperModel(
+                    model_name, device=device, compute_type="float16"
+                )
+                print(f"[whisper] loaded {model_name} on {device} (float16)")
+                return _model
+            except Exception as exc:
+                if device == "cuda":
+                    # Explicit cuda request with no CUDA → fail loudly
+                    raise
+                print(
+                    f"[whisper] GPU init failed ({exc}); falling back to CPU int8. "
+                    "On Windows/Linux with an Nvidia GPU, install "
+                    "nvidia-cublas-cu12 + nvidia-cudnn-cu12 to enable CUDA."
+                )
         _model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        print(f"[whisper] loaded {model_name} on cpu (int8)")
     return _model
 
 

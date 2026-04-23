@@ -202,6 +202,48 @@ class CaptureEnvOverrideTests(unittest.TestCase):
         )
 
 
+class CaptureStartTimeoutTests(unittest.TestCase):
+    """``start_timeout_ms`` supports the voice follow-up window: if the
+    user doesn't start speaking within N ms, return empty audio so the
+    caller can fall back to the wake-word path."""
+
+    def test_start_timeout_returns_empty_on_extended_silence(self):
+        """No speech within the timeout → empty array returned."""
+        # All chunks return "silence"; capture should exit via start_timeout.
+        probs = [0.01] * 10_000
+        chunks = [_chunk(0.0)] * 10_000
+
+        fake_time = [0.0]
+        def fake_monotonic():
+            fake_time[0] += 0.032  # 32ms per tick
+            return fake_time[0]
+
+        with patch("ifa.voice.capture.time.monotonic", side_effect=fake_monotonic):
+            audio = capture_utterance(
+                read_chunk=_reader_yielding(chunks),
+                start_timeout_ms=500,
+                vad=_FakeVAD(probs),
+            )
+        self.assertEqual(len(audio), 0)
+
+    def test_start_timeout_does_not_cut_once_speech_started(self):
+        """Once saw_speech is set, start_timeout is irrelevant."""
+        silence_chunks_needed = (1500 // CHUNK_MS) + 1
+        # speech begins immediately; then trailing silence > default 1.5s
+        probs = [0.9] * 3 + [0.01] * silence_chunks_needed
+        chunks = [_chunk(0.5)] * len(probs)
+
+        audio = capture_utterance(
+            read_chunk=_reader_yielding(chunks),
+            start_timeout_ms=100,  # tight, but speech starts first
+            vad=_FakeVAD(probs),
+        )
+        # Full utterance captured, not truncated by start_timeout
+        self.assertEqual(
+            len(audio), (3 + silence_chunks_needed) * CAPTURE_SAMPLES
+        )
+
+
 class CaptureFallbackTests(unittest.TestCase):
     def test_vad_exception_falls_back_to_energy_threshold(self):
         """If VAD raises, capture completes via energy fallback without erroring."""

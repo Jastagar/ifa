@@ -79,6 +79,7 @@ def capture_utterance(
     silence_ms: Optional[int] = None,
     max_utterance_ms: Optional[int] = None,
     threshold: Optional[float] = None,
+    start_timeout_ms: Optional[int] = None,
     vad: Optional[object] = None,
 ) -> np.ndarray:
     """Capture one utterance: return audio up to the end of speech.
@@ -90,6 +91,16 @@ def capture_utterance(
     including the trailing silence window (we don't trim — Whisper
     handles trailing silence fine, and trimming would mask
     late-utterance trailing sounds).
+
+    Parameters
+    ----------
+    start_timeout_ms:
+        If set, return an empty array when no speech is detected within
+        this many ms from the start of the call. Used by voice mode's
+        follow-up window: "if the user doesn't start talking within 5s,
+        give up and fall back to wake-word." Default ``None`` = wait
+        indefinitely for the first word (original behavior, right after
+        a wake-word fire).
     """
     if silence_ms is None:
         silence_ms = int(os.environ.get("IFA_VAD_SILENCE_MS", "1500"))
@@ -98,10 +109,8 @@ def capture_utterance(
     if threshold is None:
         threshold = float(os.environ.get("IFA_VAD_THRESHOLD", "0.5"))
 
-    # Lazy VAD load: tests inject ``vad`` directly, real callers get the
-    # bundled model on first capture.
     vad_model = vad if vad is not None else _load_vad()
-    vad_failed = False  # flips on first exception from the VAD
+    vad_failed = False
 
     buffer: list[np.ndarray] = []
     silence_elapsed_ms = 0
@@ -112,7 +121,6 @@ def capture_utterance(
         chunk = read_chunk()
         if chunk.dtype != np.float32:
             chunk = chunk.astype(np.float32)
-        buffer.append(chunk)
 
         if not vad_failed:
             try:
@@ -124,17 +132,31 @@ def capture_utterance(
             prob = _speech_prob_via_energy(chunk)
 
         if prob >= threshold:
-            silence_elapsed_ms = 0
             saw_speech = True
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        # Follow-up-window exit: no speech started within the timeout, bail
+        # with an empty array so the caller can fall back to wake-word.
+        if (
+            start_timeout_ms is not None
+            and not saw_speech
+            and elapsed_ms >= start_timeout_ms
+        ):
+            return np.zeros(0, dtype=np.float32)
+
+        buffer.append(chunk)
+
+        if prob >= threshold:
+            silence_elapsed_ms = 0
         else:
-            # Only start counting silence after the user has started speaking —
-            # otherwise an early 1.5s of hesitation cuts the turn before a word.
+            # Only start counting silence after the user has started speaking.
             if saw_speech:
                 silence_elapsed_ms += CHUNK_MS
                 if silence_elapsed_ms >= silence_ms:
                     break
 
-        if (time.monotonic() - start) * 1000 >= max_utterance_ms:
+        if elapsed_ms >= max_utterance_ms:
             break
 
     return np.concatenate(buffer) if buffer else np.zeros(0, dtype=np.float32)

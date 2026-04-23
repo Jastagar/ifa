@@ -89,29 +89,31 @@ class _FakeTTS:
 
 class InitInputTests(unittest.TestCase):
     def test_text_mode_is_default(self):
-        from ifa.voice.input import init_input, _text_input
+        from ifa.voice.input import _TextMode, init_input
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("IFA_MODE", None)
-            cb = init_input(tts_service=_FakeTTS())
-        self.assertIs(cb, _text_input)
+            mode = init_input(tts_service=_FakeTTS())
+        self.assertIsInstance(mode, _TextMode)
 
-    def test_text_mode_ignores_tts(self):
+    def test_text_mode_arm_followup_is_noop(self):
         from ifa.voice.input import init_input
 
         with patch.dict(os.environ, {"IFA_MODE": "text"}):
-            cb = init_input(tts_service=_FakeTTS())
-        self.assertTrue(callable(cb))
+            mode = init_input(tts_service=_FakeTTS())
+        # Must not raise — orchestrator calls this after every turn.
+        mode.arm_followup()
+        self.assertTrue(hasattr(mode, "get"))
 
     def test_voice_mode_init_failure_falls_back_to_text(self):
-        """If VoiceInput init raises (e.g. no mic), we return text_input
-        rather than crashing the orchestrator."""
-        from ifa.voice.input import init_input, _text_input
+        """If VoiceInput init raises (e.g. no mic), we return the text
+        mode stub rather than crashing the orchestrator."""
+        from ifa.voice.input import _TextMode, init_input
 
         with patch.dict(os.environ, {"IFA_MODE": "voice"}), \
              patch("ifa.voice.input.VoiceInput", side_effect=RuntimeError("no mic")):
-            cb = init_input(tts_service=_FakeTTS())
-        self.assertIs(cb, _text_input)
+            mode = init_input(tts_service=_FakeTTS())
+        self.assertIsInstance(mode, _TextMode)
 
 
 # ---------- VoiceInput tests (real class, mocked deps) ----------
@@ -257,23 +259,22 @@ class OrchestratorInitInputIntegrationTests(unittest.TestCase):
     """Smoke-check that orchestrator.run wires init_input correctly.
 
     Only the plumbing path is exercised: agent_turn and check_health are
-    mocked out, and the input callable is replaced with a canned iterator.
+    mocked out, and the input mode is a canned stub.
     """
 
-    def test_orchestrator_uses_init_input_callable(self):
-        """orchestrator.run should call init_input(tts), then loop on its return value."""
+    def test_orchestrator_uses_input_mode_and_arms_followup_each_turn(self):
+        """orchestrator.run must (a) call init_input(tts), (b) loop on
+        input_mode.get(), (c) call arm_followup() after every tts.speak()."""
         from ifa.core import orchestrator
 
-        # Canned input sequence: one real message, then "exit"
         inputs = iter(["hello", "exit"])
-
-        def fake_get():
-            return next(inputs)
+        fake_mode = MagicMock(name="input_mode")
+        fake_mode.get.side_effect = lambda: next(inputs)
 
         init_input_calls = []
         def fake_init_input(tts_service):
             init_input_calls.append(tts_service)
-            return fake_get
+            return fake_mode
 
         with patch("ifa.core.orchestrator.check_health"), \
              patch("ifa.core.orchestrator.load_n8n_config", return_value={}), \
@@ -287,6 +288,75 @@ class OrchestratorInitInputIntegrationTests(unittest.TestCase):
 
         self.assertEqual(len(init_input_calls), 1)
         self.assertIs(init_input_calls[0], tts_cls.return_value)
+        # arm_followup was called once — after the one real turn ("hello"),
+        # NOT after the "exit" command (that short-circuits the loop).
+        self.assertEqual(fake_mode.arm_followup.call_count, 1)
+
+
+class VoiceInputFollowupTests(unittest.TestCase):
+    """Exercise the follow-up-window behavior that skips wake-word after a reply."""
+
+    def setUp(self) -> None:
+        self.sd_cls = _install_fake_sounddevice()
+        self.ow_cls, self.ow_inst = _install_fake_openwakeword()
+        self.whisper_cls = _install_fake_whisper()
+
+    def tearDown(self) -> None:
+        _uninstall_fake_whisper()
+        _uninstall_fake_openwakeword()
+        _uninstall_fake_sounddevice()
+
+    def test_arm_followup_sets_deadline_in_future(self):
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+        try:
+            self.assertFalse(vi._in_followup_window())
+            vi.arm_followup()
+            self.assertTrue(vi._in_followup_window())
+        finally:
+            vi.close()
+
+    def test_arm_followup_is_noop_when_window_is_zero(self):
+        from ifa.voice.input import VoiceInput
+
+        with patch.dict(os.environ, {"IFA_FOLLOWUP_WINDOW_SEC": "0"}):
+            vi = VoiceInput(tts_service=_FakeTTS())
+        try:
+            vi.arm_followup()
+            self.assertFalse(vi._in_followup_window())
+        finally:
+            vi.close()
+
+    def test_followup_bypasses_wake_word_and_passes_start_timeout(self):
+        """When armed, the loop skips wait_for_wake and calls capture
+        with ``start_timeout_ms`` matching the follow-up window."""
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+        vi._followup_window_sec = 5.0
+        vi.arm_followup()  # arm BEFORE starting thread
+
+        wait_called = [False]
+        def fake_wait(read_chunk):
+            wait_called[0] = True
+            raise _LoopStop()  # should NOT be called in follow-up path
+
+        capture_kwargs_seen = {}
+        def fake_capture(read_chunk, **kwargs):
+            capture_kwargs_seen.update(kwargs)
+            raise _LoopStop()  # end after first capture
+
+        vi._listener.wait_for_wake = fake_wait
+        vi._capture_utterance = fake_capture
+        vi._transcribe = MagicMock(return_value="")
+        vi.start()
+        vi._thread.join(timeout=1.0)
+        try:
+            self.assertFalse(wait_called[0], "wait_for_wake must be skipped during follow-up")
+            self.assertEqual(capture_kwargs_seen.get("start_timeout_ms"), 5000)
+        finally:
+            vi.close()
 
 
 if __name__ == "__main__":

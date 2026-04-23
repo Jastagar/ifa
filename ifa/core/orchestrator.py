@@ -92,12 +92,12 @@ def run() -> None:
     resume_reminders(tts, DB_PATH)
 
     # 7. Initialize input mode (text default; IFA_MODE=voice opts in)
-    get_input = init_input(tts)
+    input_mode = init_input(tts)
 
     # 8. Main loop
     memory = Memory()
     while True:
-        user_input = get_input().strip()
+        user_input = input_mode.get().strip()
         if not user_input:
             continue
         if user_input.lower() in ["exit", "quit"]:
@@ -106,3 +106,6 @@ def run() -> None:
         reply = agent_turn(user_input, ctx, memory)
         print("Ifa:", reply)
         tts.speak(reply)
+        # Arm the follow-up window: in voice mode, the next utterance
+        # within ~5s skips the wake word; text mode is a no-op.
+        input_mode.arm_followup()
