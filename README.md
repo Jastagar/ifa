@@ -10,11 +10,21 @@ python 3.12.10
 
 ### Easy way — double-click
 
+**Text mode** (type to chat):
+
 - **Windows (cmd)**: double-click `run.bat`
-- **Windows (PowerShell)**: double-click `run-ps.bat` (runs `run.ps1` with `-ExecutionPolicy Bypass` so nothing needs configuring)
+- **Windows (PowerShell)**: double-click `run-ps.bat`
 - **macOS**: double-click `run.command` (first-time only: right-click → Open to bypass Gatekeeper)
 
-All launchers self-heal: create the Python venv, install dependencies, start Ollama, pull `qwen2.5:7b-instruct` if missing, then launch Ifa. First run takes a few minutes (venv + ~5GB model download); subsequent runs are fast. The window always pauses at the end — read any error before closing.
+**Voice mode** (say "hey mycroft" to talk):
+
+- **Windows (cmd)**: double-click `run-voice.bat`
+- **Windows (PowerShell)**: double-click `run-voice-ps.bat`
+- **macOS**: double-click `run-voice.command`
+
+All launchers self-heal: create the Python venv, install dependencies, start Ollama, pull `qwen2.5:7b-instruct` if missing, pre-download the voice models, then launch Ifa. First run takes a few minutes (venv + ~5GB Ollama model + ~500MB voice models); subsequent runs are fast. Voice-mode runtime has `HF_HUB_OFFLINE=1` set, so once the models are cached the app never touches the network. The window always pauses at the end — read any error before closing.
+
+The wake word is `hey mycroft` for v1 (openWakeWord built-in). Custom "hey ifa" training is planned but deferred. Set `IFA_WAKE_MODEL=alexa` / `hey_jarvis` / `hey_rhasspy` to pick a different built-in, or point it at a custom `.onnx` file.
 
 ### Prerequisites
 
@@ -24,9 +34,22 @@ All launchers self-heal: create the Python venv, install dependencies, start Oll
 ### Manual run (from a terminal)
 
 ```bash
-PYTHONPATH=. venv/bin/python -m ifa.main       # macOS / Linux
-set PYTHONPATH=. && venv\Scripts\python -m ifa.main    # Windows
+# text mode (default)
+PYTHONPATH=. venv/bin/python -m ifa.main                          # macOS / Linux
+set PYTHONPATH=. && venv\Scripts\python -m ifa.main               # Windows
+
+# voice mode — wake word + VAD + Whisper
+IFA_MODE=voice PYTHONPATH=. venv/bin/python -m ifa.main           # macOS / Linux
+set PYTHONPATH=. && set IFA_MODE=voice && venv\Scripts\python -m ifa.main    # Windows
 ```
+
+Voice mode tunables (env vars):
+
+- `IFA_WAKE_MODEL` — wake word (default `hey_mycroft`; accepts a path to a custom `.onnx`)
+- `IFA_WAKE_THRESHOLD` — wake-word detection threshold 0-1 (default `0.7`)
+- `IFA_WHISPER_MODEL` — faster-whisper model name (default `small.en`)
+- `IFA_VAD_SILENCE_MS` — trailing silence that ends an utterance (default `1500`)
+- `IFA_VAD_MAX_UTTERANCE_MS` — hard cap per turn (default `30000`)
 
 ## n8n integration (optional)
 

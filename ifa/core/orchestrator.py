@@ -28,7 +28,7 @@ from ifa.services.ollama_client import check_health
 from ifa.services.tts_service import TTSService
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
-from ifa.voice.input import get_input
+from ifa.voice.input import init_input
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
 
@@ -91,7 +91,10 @@ def run() -> None:
     # 6. Restore reminders BEFORE entering the main loop
     resume_reminders(tts, DB_PATH)
 
-    # 7. Main loop
+    # 7. Initialize input mode (text default; IFA_MODE=voice opts in)
+    get_input = init_input(tts)
+
+    # 8. Main loop
     memory = Memory()
     while True:
         user_input = get_input().strip()
