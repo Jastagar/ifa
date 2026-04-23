@@ -1,17 +1,15 @@
-from ifa.voice.input import get_input
-from ifa.core.brain import think, detect_intent, extract_fact
-from ifa.skills.manager import handle_with_intent
-from ifa.services.tts_service import TTSService
-from ifa.services.db import init_db, DB_PATH
-import threading
 import sqlite3
+import threading
 import time
 
+from ifa.core.brain import detect_intent, extract_fact, think
+from ifa.services.db import DB_PATH, init_db
+from ifa.services.tts_service import TTSService
+from ifa.skills.manager import handle_with_intent
+from ifa.voice.input import get_input
 
-tts = TTSService()
 
-
-def resume_reminders():
+def resume_reminders(tts):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
@@ -29,7 +27,6 @@ def resume_reminders():
             print(f"\n⏰ {message}")
             tts.speak(message)
 
-            # ✅ delete after firing
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
             cur.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
@@ -44,11 +41,13 @@ def resume_reminders():
 def run():
     print("Orchestrator running...")
 
-    # ✅ setup DB + restore reminders
+    tts = TTSService()
     init_db()
-    resume_reminders()
+    resume_reminders(tts)
 
     while True:
+        tts.drain_queue()
+
         user_input = get_input().strip()
 
         fact = extract_fact(user_input)
@@ -68,7 +67,7 @@ def run():
 
         intent = detect_intent(user_input)
 
-        skill_response = handle_with_intent(intent, user_input)
+        skill_response = handle_with_intent(intent, user_input, tts)
 
         if skill_response:
             response = skill_response
