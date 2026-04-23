@@ -1,0 +1,39 @@
+# Ifa n8n workflow registry.
+#
+# Copy this file to `n8n_workflows.yaml` in the same directory and edit
+# the entries to match your n8n instance. The real file is gitignored —
+# the `.example` you're reading is committed as documentation.
+#
+# Each workflow needs at minimum a `url`. Optional fields:
+#   auth:   { type: header, name: <header-name>, env: <env-var-holding-secret> }
+#   timeout: seconds (default 30)
+#   payload_schema: JSON Schema the LLM's payload must match. Defaults to
+#     an empty-properties object — the LLM can only send {} unless you
+#     declare allowed fields here. Always set `additionalProperties: false`
+#     explicitly or the LLM may include extra keys.
+
+workflows:
+
+  # Minimal workflow: just a URL. LLM can only send an empty payload.
+  quick_ping:
+    url: https://n8n.local/webhook/REPLACE_WITH_YOUR_WEBHOOK_ID
+
+  # Full workflow: auth header from env var, custom timeout, typed payload.
+  home_summary:
+    url: https://n8n.local/webhook/REPLACE_WITH_YOUR_WEBHOOK_ID
+    auth:
+      type: header
+      name: X-API-Key
+      env: IFA_N8N_HOME_KEY  # secret value read from this env var at call time
+    timeout: 30
+    payload_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          description: Short user-facing message to pass into the workflow.
+        data:
+          type: object
+          description: Structured data for the workflow.
+      required: []

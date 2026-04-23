@@ -4,3 +4,11 @@
 /.claude
 ifa.db
 **/**.env
+
+# n8n webhook URLs and env-var auth refs — user-specific, contains secrets.
+# A committed .example file lives next to this.
+ifa/config/n8n_workflows.yaml
+
+# Claude Code / compound-engineering local state
+.compound-engineering/
+.context/
