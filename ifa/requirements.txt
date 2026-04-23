@@ -28,7 +28,7 @@ httpx==0.28.1
 huggingface_hub==1.11.0
 humanfriendly==10.0
 idna==3.11
-joblib==1.5.3
+joblib>=1.3,<2.0
 jsonschema==4.26.0
 markdown-it-py==4.0.0
 mdurl==0.1.2
@@ -50,13 +50,17 @@ pywin32==311; sys_platform == "win32"
 PyYAML==6.0.3
 requests==2.33.1
 rich==15.0.0
-scikit-learn==1.8.0
-scipy==1.17.1
+# scikit-learn / scipy are openwakeword transitive deps — pinned as
+# ranges (not exact) because newer versions drop Python 3.10 support
+# and some target machines are still on 3.10. Let pip resolve to the
+# newest compatible version.
+scikit-learn>=1.5,<2.0
+scipy>=1.10,<2.0
 shellingham==1.5.4
 sounddevice==0.5.5
 sympy==1.14.0
 tabulate==0.10.0
-threadpoolctl==3.6.0
+threadpoolctl>=3.1,<4.0
 tokenizers==0.22.2
 tqdm==4.67.3
 typer==0.24.1
