@@ -46,7 +46,6 @@ pywin32==311; sys_platform == "win32"
 PyYAML==6.0.3
 rich==15.0.0
 shellingham==1.5.4
-soundfile==0.13.1
 sounddevice==0.5.5
 sympy==1.14.0
 tabulate==0.10.0

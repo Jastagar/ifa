@@ -1,83 +1,80 @@
+import base64
 import os
-import queue
+import subprocess
+import sys
 import tempfile
-import threading
 
-import pyttsx3
-import sounddevice as sd
-import soundfile as sf
 from rich.console import Console
 
 _console = Console()
 
 
 class TTSService:
-    """Cross-platform text-to-speech.
+    """Cross-platform text-to-speech via the OS's native speech binaries.
 
-    Synthesis uses `pyttsx3` (OS-native voices, offline). Playback uses
-    `sounddevice` on the system default output.
+    - **macOS**: `say -o <aiff>` synthesizes to a temp AIFF; `afplay` plays
+      it back and blocks on real completion. (`say` alone returns before
+      CoreAudio finishes draining, truncating audio on rapid successive
+      calls; `afplay` fixes that.)
+    - **Windows**: PowerShell's `System.Speech.Synthesis.SpeechSynthesizer`
+      via `-EncodedCommand`, with the spoken text passed through an
+      environment variable so no metacharacter in `text` can alter
+      command structure.
+    - **Linux**: `espeak`, with `--` as an argv separator so text starting
+      with `-` can't be misread as a flag.
 
-    pyttsx3 on macOS uses Cocoa's NSRunLoop, which is not safe to drive from
-    background threads. `speak()` called from a non-main thread posts the
-    request to an internal queue and blocks; the main thread drains the queue
-    via `drain_queue()` on each orchestrator loop iteration.
+    Thread-safety: each `speak()` call spawns a fresh subprocess, so the
+    method is safe to call from daemon threads without additional gating.
     """
-
-    def __init__(self):
-        self._main_thread_id = threading.get_ident()
-        self._queue: "queue.Queue" = queue.Queue()
-        self._speak_lock = threading.Lock()
 
     def speak(self, text: str) -> None:
         if not text:
             return
 
-        if threading.get_ident() == self._main_thread_id:
-            self._speak_on_main(text)
-            return
+        try:
+            if sys.platform == "darwin":
+                self._speak_macos(text)
+            elif sys.platform == "win32":
+                self._speak_windows(text)
+            else:
+                subprocess.run(["espeak", "--", text], check=False)
+        except FileNotFoundError as exc:
+            binary = getattr(exc, "filename", None) or "TTS binary"
+            _console.print(
+                f"[yellow]TTS: `{binary}` not found. Expected "
+                "`say`+`afplay` on macOS, `powershell` on Windows, `espeak` on Linux.[/yellow]"
+            )
+        except Exception as exc:
+            _console.print(f"[yellow]TTS failed: {exc}[/yellow]")
 
-        done = threading.Event()
-        self._queue.put((text, done))
-        done.wait()
-
-    def drain_queue(self) -> None:
-        """Run every pending speak request on the main thread. Non-blocking
-        if the queue is empty."""
-        while True:
+    def _speak_macos(self, text: str) -> None:
+        fd, aiff_path = tempfile.mkstemp(suffix=".aiff", prefix="ifa_tts_")
+        os.close(fd)
+        try:
+            subprocess.run(["say", "-o", aiff_path, "--", text], check=False)
+            subprocess.run(["afplay", aiff_path], check=False)
+        finally:
             try:
-                text, done = self._queue.get_nowait()
-            except queue.Empty:
-                return
-            try:
-                self._speak_on_main(text)
-            finally:
-                done.set()
+                os.unlink(aiff_path)
+            except OSError:
+                pass
 
-    def _speak_on_main(self, text: str) -> None:
-        with self._speak_lock:
-            tmp_path = None
-            try:
-                fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="ifa_tts_")
-                os.close(fd)
-
-                engine = pyttsx3.init()
-                engine.save_to_file(text, tmp_path)
-                engine.runAndWait()
-
-                if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
-                    _console.print("[yellow]TTS produced no audio; skipping playback.[/yellow]")
-                    return
-
-                data, samplerate = sf.read(tmp_path, dtype="float32")
-
-                try:
-                    sd.play(data, samplerate, device=None)
-                    sd.wait()
-                except sd.PortAudioError as exc:
-                    _console.print(f"[yellow]TTS playback failed: {exc}[/yellow]")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
+    def _speak_windows(self, text: str) -> None:
+        # String-concat PowerShell commands with user-controlled text are
+        # exploitable — a newline in `text` terminates the single-quoted
+        # literal in -Command mode and the remainder is parsed as new PS
+        # statements. `text` can come from LLM output (prompt injection
+        # surface). Instead: pass text out-of-band via an environment
+        # variable and use -EncodedCommand so there is no interpolation.
+        script = (
+            "Add-Type -AssemblyName System.Speech; "
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            '$s.Speak([System.Environment]::GetEnvironmentVariable("IFA_TTS_TEXT"))'
+        )
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        env = {**os.environ, "IFA_TTS_TEXT": text}
+        subprocess.run(
+            ["powershell", "-NoProfile", "-EncodedCommand", encoded],
+            env=env,
+            check=False,
+        )

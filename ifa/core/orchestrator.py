@@ -46,8 +46,6 @@ def run():
     resume_reminders(tts)
 
     while True:
-        tts.drain_queue()
-
         user_input = get_input().strip()
 
         fact = extract_fact(user_input)

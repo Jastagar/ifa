@@ -2,169 +2,185 @@
 
 Run: python -m unittest ifa.tests.test_tts_service -v
 """
-import os
-import subprocess
+import ast
+import base64
+import pathlib
 import threading
 import unittest
-from unittest.mock import MagicMock, patch
-
-import numpy as np
-import sounddevice as sd
+from unittest.mock import patch
 
 from ifa.services.tts_service import TTSService
 
 
-def _fake_engine_that_writes_wav():
-    """Returns a pyttsx3.init() replacement that writes a short silent WAV
-    on runAndWait()."""
-    state = {"target_path": None}
-    engine = MagicMock()
-
-    def save_to_file(text, path):
-        state["target_path"] = path
-
-    def run_and_wait():
-        if state["target_path"]:
-            import soundfile as sf
-            silence = np.zeros(800, dtype="float32")
-            sf.write(state["target_path"], silence, 16000)
-
-    engine.save_to_file.side_effect = save_to_file
-    engine.runAndWait.side_effect = run_and_wait
-    return engine
+def _mock_tempfile():
+    """Patch tempfile so tests never touch the real filesystem."""
+    return patch(
+        "ifa.services.tts_service.tempfile.mkstemp",
+        return_value=(9999, "/tmp/fake_ifa_tts.aiff"),
+    )
 
 
-class TTSServiceMainThreadTests(unittest.TestCase):
+def _mock_os_close_and_unlink():
+    return (
+        patch("ifa.services.tts_service.os.close"),
+        patch("ifa.services.tts_service.os.unlink"),
+    )
+
+
+class TTSServiceDispatchTests(unittest.TestCase):
     def test_empty_text_is_noop(self):
         tts = TTSService()
-        with patch("ifa.services.tts_service.pyttsx3.init") as init, \
-             patch("ifa.services.tts_service.sd.play") as play:
+        with patch("ifa.services.tts_service.subprocess.run") as run:
             tts.speak("")
-            init.assert_not_called()
-            play.assert_not_called()
+            run.assert_not_called()
 
-    def test_speak_on_main_thread_plays_on_default(self):
+    def test_darwin_uses_say_to_file_then_afplay(self):
         tts = TTSService()
-        with patch("ifa.services.tts_service.pyttsx3.init",
-                   return_value=_fake_engine_that_writes_wav()), \
-             patch("ifa.services.tts_service.sd.play") as play, \
-             patch("ifa.services.tts_service.sd.wait"):
+        close_patch, unlink_patch = _mock_os_close_and_unlink()
+        with patch("ifa.services.tts_service.sys.platform", "darwin"), \
+             _mock_tempfile(), close_patch, unlink_patch, \
+             patch("ifa.services.tts_service.subprocess.run") as run:
             tts.speak("hello")
-            self.assertEqual(play.call_count, 1)
-            _args, kwargs = play.call_args
-            self.assertIsNone(kwargs.get("device"))
+        self.assertEqual(run.call_count, 2)
+        say_cmd = run.call_args_list[0][0][0]
+        afplay_cmd = run.call_args_list[1][0][0]
+        self.assertEqual(say_cmd[0], "say")
+        self.assertEqual(say_cmd[1], "-o")
+        self.assertEqual(say_cmd[3], "--")
+        self.assertEqual(say_cmd[4], "hello")
+        self.assertEqual(afplay_cmd[0], "afplay")
+        self.assertEqual(say_cmd[2], afplay_cmd[1])
 
-    def test_port_audio_error_on_play_does_not_raise(self):
+    def test_darwin_uses_argv_separator_for_text_starting_with_dash(self):
+        """Text starting with `-` must not be interpreted as a `say` flag."""
         tts = TTSService()
-        with patch("ifa.services.tts_service.pyttsx3.init",
-                   return_value=_fake_engine_that_writes_wav()), \
-             patch("ifa.services.tts_service.sd.play",
-                   side_effect=sd.PortAudioError("boom")), \
-             patch("ifa.services.tts_service.sd.wait"):
-            tts.speak("hello")  # must not raise
+        close_patch, unlink_patch = _mock_os_close_and_unlink()
+        with patch("ifa.services.tts_service.sys.platform", "darwin"), \
+             _mock_tempfile(), close_patch, unlink_patch, \
+             patch("ifa.services.tts_service.subprocess.run") as run:
+            tts.speak("--version")
+        say_cmd = run.call_args_list[0][0][0]
+        self.assertIn("--", say_cmd)
+        self.assertEqual(say_cmd[-1], "--version")
 
-    def test_port_audio_error_on_wait_does_not_raise(self):
+    def test_windows_uses_encoded_command_with_env_var(self):
         tts = TTSService()
-        with patch("ifa.services.tts_service.pyttsx3.init",
-                   return_value=_fake_engine_that_writes_wav()), \
-             patch("ifa.services.tts_service.sd.play"), \
-             patch("ifa.services.tts_service.sd.wait",
-                   side_effect=sd.PortAudioError("boom")):
-            tts.speak("hello")  # must not raise
+        with patch("ifa.services.tts_service.sys.platform", "win32"), \
+             patch("ifa.services.tts_service.subprocess.run") as run:
+            tts.speak("hello")
+        run.assert_called_once()
+        args, kwargs = run.call_args
+        cmd = args[0]
+        self.assertEqual(cmd[0], "powershell")
+        self.assertIn("-NoProfile", cmd)
+        self.assertIn("-EncodedCommand", cmd)
+        encoded = cmd[-1]
+        decoded = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertIn("GetEnvironmentVariable", decoded)
+        self.assertIn("IFA_TTS_TEXT", decoded)
+        self.assertEqual(kwargs["env"]["IFA_TTS_TEXT"], "hello")
 
-    def test_temp_wav_is_cleaned_up(self):
+    def test_windows_injection_payload_does_not_appear_in_command(self):
+        """Newlines and PowerShell metacharacters in text must not leak
+        into the command string."""
         tts = TTSService()
-        captured = {}
+        payload = "innocent\n; Start-Process calc"
+        with patch("ifa.services.tts_service.sys.platform", "win32"), \
+             patch("ifa.services.tts_service.subprocess.run") as run:
+            tts.speak(payload)
+        cmd = run.call_args[0][0]
+        encoded = cmd[-1]
+        decoded_script = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertNotIn("Start-Process calc", decoded_script)
+        self.assertEqual(run.call_args[1]["env"]["IFA_TTS_TEXT"], payload)
 
-        def fake_init():
-            engine = _fake_engine_that_writes_wav()
-            orig_save = engine.save_to_file.side_effect
+    def test_linux_uses_espeak_with_argv_separator(self):
+        tts = TTSService()
+        with patch("ifa.services.tts_service.sys.platform", "linux"), \
+             patch("ifa.services.tts_service.subprocess.run") as run:
+            tts.speak("hello")
+        run.assert_called_once()
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd, ["espeak", "--", "hello"])
 
-            def track(text, path):
-                captured["path"] = path
-                orig_save(text, path)
 
-            engine.save_to_file.side_effect = track
-            return engine
-
-        with patch("ifa.services.tts_service.pyttsx3.init", side_effect=fake_init), \
-             patch("ifa.services.tts_service.sd.play"), \
-             patch("ifa.services.tts_service.sd.wait"):
+class TTSServiceErrorHandlingTests(unittest.TestCase):
+    def test_missing_binary_does_not_raise(self):
+        tts = TTSService()
+        err = FileNotFoundError("No such file or directory")
+        err.filename = "say"
+        with patch("ifa.services.tts_service.subprocess.run", side_effect=err), \
+             _mock_tempfile(), \
+             patch("ifa.services.tts_service.os.close"), \
+             patch("ifa.services.tts_service.os.unlink"):
             tts.speak("hello")
 
-        self.assertIn("path", captured)
-        self.assertFalse(os.path.exists(captured["path"]))
-
-    def test_empty_wav_skips_playback(self):
-        """If pyttsx3 writes an empty file, play() is not invoked."""
+    def test_generic_subprocess_error_does_not_raise(self):
         tts = TTSService()
-        engine = MagicMock()
-        engine.save_to_file.side_effect = lambda text, path: open(path, "w").close()
-        engine.runAndWait.side_effect = lambda: None
-
-        with patch("ifa.services.tts_service.pyttsx3.init", return_value=engine), \
-             patch("ifa.services.tts_service.sd.play") as play:
+        with patch("ifa.services.tts_service.subprocess.run",
+                   side_effect=OSError("EPERM")), \
+             _mock_tempfile(), \
+             patch("ifa.services.tts_service.os.close"), \
+             patch("ifa.services.tts_service.os.unlink"):
             tts.speak("hello")
-            play.assert_not_called()
+
+    def test_darwin_cleanup_runs_even_on_subprocess_error(self):
+        tts = TTSService()
+        close_patch = patch("ifa.services.tts_service.os.close")
+        unlink_patch = patch("ifa.services.tts_service.os.unlink")
+        with patch("ifa.services.tts_service.sys.platform", "darwin"), \
+             _mock_tempfile(), \
+             close_patch, unlink_patch as unlink_mock, \
+             patch("ifa.services.tts_service.subprocess.run",
+                   side_effect=OSError("boom")):
+            tts.speak("hello")
+        unlink_mock.assert_called_once_with("/tmp/fake_ifa_tts.aiff")
 
 
-class TTSServiceCrossThreadTests(unittest.TestCase):
-    def test_cross_thread_call_queues_and_drains(self):
+class TTSServiceThreadSafetyTests(unittest.TestCase):
+    def test_concurrent_speak_calls_from_threads(self):
         tts = TTSService()
         calls = []
 
-        def fake_speak_on_main(text):
-            calls.append(text)
+        def fake_run(*args, **kwargs):
+            cmd = args[0]
+            calls.append(cmd[-1])
 
-        with patch.object(tts, "_speak_on_main", side_effect=fake_speak_on_main):
-            done_flag = threading.Event()
+        with patch("ifa.services.tts_service.subprocess.run", side_effect=fake_run), \
+             patch("ifa.services.tts_service.sys.platform", "linux"):
+            threads = [
+                threading.Thread(target=lambda i=i: tts.speak(f"from_thread_{i}"))
+                for i in range(5)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=1.0)
+                self.assertFalse(t.is_alive())
 
-            def worker():
-                tts.speak("from thread")
-                done_flag.set()
-
-            t = threading.Thread(target=worker)
-            t.start()
-
-            # Worker is blocked until drain_queue runs on the main thread.
-            self.assertFalse(done_flag.wait(timeout=0.1))
-            self.assertEqual(calls, [])
-
-            tts.drain_queue()
-
-            self.assertTrue(done_flag.wait(timeout=1.0))
-            self.assertEqual(calls, ["from thread"])
-            t.join(timeout=1.0)
-
-    def test_drain_queue_when_empty_is_noop(self):
-        tts = TTSService()
-        tts.drain_queue()  # must not block or raise
-
-    def test_main_thread_call_does_not_use_queue(self):
-        tts = TTSService()
-        with patch.object(tts, "_speak_on_main") as fake_main:
-            tts.speak("direct")
-            fake_main.assert_called_once_with("direct")
-        self.assertTrue(tts._queue.empty())
+        self.assertEqual(sorted(calls), [f"from_thread_{i}" for i in range(5)])
 
 
 class ManagerDecouplingTests(unittest.TestCase):
-    """Plan O1: manager.py must not construct its own TTSService."""
+    """Plan R14: manager.py must not construct its own TTSService."""
 
     def test_manager_does_not_instantiate_tts_service(self):
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..")
-        )
-        result = subprocess.run(
-            ["grep", "-n", "TTSService()", "ifa/skills/manager.py"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-        )
+        manager_path = pathlib.Path(__file__).parent.parent / "skills" / "manager.py"
+        tree = ast.parse(manager_path.read_text())
+
+        bad_calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "TTSService":
+                    bad_calls.append(node.lineno)
+                elif isinstance(func, ast.Attribute) and func.attr == "TTSService":
+                    bad_calls.append(node.lineno)
+
         self.assertEqual(
-            result.stdout,
-            "",
-            f"manager.py constructs TTSService() -- should receive it via handle_with_intent parameter. Found: {result.stdout!r}",
+            bad_calls,
+            [],
+            f"manager.py calls TTSService() at lines {bad_calls} — should receive it via handle_with_intent parameter",
         )
 
 
