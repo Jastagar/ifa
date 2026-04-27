@@ -105,8 +105,8 @@ class TranscribeArrayTests(unittest.TestCase):
         self.assertEqual(kwargs.get("device"), "cpu")
 
     def test_device_auto_tries_cuda_then_falls_back_to_cpu(self):
-        """Default device='auto' should try CUDA (float16) first; on
-        failure, fall back to CPU (int8) without raising."""
+        """Default device='auto' should try CUDA (int8_float16) first;
+        on failure, fall back to CPU (int8) without raising."""
         from ifa.voice.stt import transcribe_array
 
         # WhisperModel call log: first call raises (cuda unavailable), second succeeds (cpu)
@@ -121,16 +121,40 @@ class TranscribeArrayTests(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("IFA_WHISPER_DEVICE", None)  # default = auto
+            os.environ.pop("IFA_WHISPER_COMPUTE_TYPE", None)
             _reset_stt_module_state()
             text = transcribe_array(np.zeros(100, dtype=np.float32))
 
         self.assertEqual(call_count[0], 2)
-        # Second call is the cpu fallback
+        # First (failed) call attempted CUDA with int8_float16
+        first_call = self.model_cls.call_args_list[0]
+        self.assertEqual(first_call.kwargs.get("device"), "auto")
+        self.assertEqual(first_call.kwargs.get("compute_type"), "int8_float16")
+        # Second (successful) call is the cpu fallback
         second_call = self.model_cls.call_args_list[1]
         self.assertEqual(second_call.kwargs.get("device"), "cpu")
         self.assertEqual(second_call.kwargs.get("compute_type"), "int8")
         # Transcription still works
         self.assertEqual(text, "hello   world")
+
+    def test_compute_type_env_override_applies_to_gpu_path(self):
+        """``IFA_WHISPER_COMPUTE_TYPE`` overrides the default for the
+        chosen device — useful for benchmarking float16 vs int8_float16."""
+        from ifa.voice.stt import transcribe_array
+
+        with patch.dict(
+            os.environ,
+            {
+                "IFA_WHISPER_DEVICE": "cuda",
+                "IFA_WHISPER_COMPUTE_TYPE": "float16",
+            },
+        ):
+            _reset_stt_module_state()
+            transcribe_array(np.zeros(100, dtype=np.float32))
+
+        kwargs = self.model_cls.call_args.kwargs
+        self.assertEqual(kwargs.get("device"), "cuda")
+        self.assertEqual(kwargs.get("compute_type"), "float16")
 
     def test_device_cuda_explicit_raises_when_unavailable(self):
         """If the user explicitly asks for CUDA but CUDA isn't there,
