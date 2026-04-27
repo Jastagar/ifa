@@ -25,6 +25,10 @@ def _install_fake_sounddevice() -> MagicMock:
     stream = MagicMock(name="InputStream_instance")
     # default: return zero-valued chunks for any read size
     stream.read.side_effect = lambda n: (np.zeros((n, 1), dtype=np.float32), False)
+    # ``read_available`` is a real int property on PortAudio streams; the
+    # production drain loop reads it. Set it to 0 so _drain_stream exits
+    # immediately in tests without spinning.
+    stream.read_available = 0
     stream_cls = MagicMock(name="InputStream_class", return_value=stream)
     fake.InputStream = stream_cls
     sys.modules["sounddevice"] = fake
@@ -355,6 +359,72 @@ class VoiceInputFollowupTests(unittest.TestCase):
         try:
             self.assertFalse(wait_called[0], "wait_for_wake must be skipped during follow-up")
             self.assertEqual(capture_kwargs_seen.get("start_timeout_ms"), 5000)
+        finally:
+            vi.close()
+
+    def test_capture_blocks_until_tts_is_silent(self):
+        """Self-feedback fix: capture must NOT start while Ifa is still
+        speaking (or in cooldown), otherwise it transcribes her own
+        voice via mic bleed-through and triggers an infinite chat loop.
+        """
+        from ifa.voice.input import VoiceInput
+
+        # TTS is_speaking starts True, becomes False after a beat
+        class _SpeakingThenSilentTTS:
+            def __init__(self):
+                self._calls = 0
+            @property
+            def is_speaking(self):
+                self._calls += 1
+                # First few polls = still speaking; then silent
+                return self._calls < 3
+
+        speaking_tts = _SpeakingThenSilentTTS()
+        vi = VoiceInput(tts_service=speaking_tts)
+
+        capture_started_at_call = [None]
+        def fake_capture(read_chunk, **kwargs):
+            capture_started_at_call[0] = speaking_tts._calls
+            raise _LoopStop()
+
+        vi._listener.wait_for_wake = lambda read_chunk: None  # immediate wake
+        vi._capture_utterance = fake_capture
+        vi._transcribe = MagicMock(return_value="")
+        vi.start()
+        vi._thread.join(timeout=2.0)
+        try:
+            # Capture must have started AFTER the polls that returned True
+            self.assertIsNotNone(capture_started_at_call[0])
+            self.assertGreaterEqual(capture_started_at_call[0], 3)
+        finally:
+            vi.close()
+
+    def test_drain_stream_called_before_each_capture(self):
+        """Audio buffered during TTS / cooldown must be discarded so
+        capture reads fresh real-time audio, not stale Ifa-voice."""
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+
+        # Track call order: drain should fire BEFORE capture.
+        order: list[str] = []
+        original_drain = vi._drain_stream
+        def spy_drain():
+            order.append("drain")
+            return original_drain()
+
+        def fake_capture(read_chunk, **kwargs):
+            order.append("capture")
+            raise _LoopStop()
+
+        vi._drain_stream = spy_drain
+        vi._listener.wait_for_wake = lambda read_chunk: None
+        vi._capture_utterance = fake_capture
+        vi._transcribe = MagicMock(return_value="")
+        vi.start()
+        vi._thread.join(timeout=2.0)
+        try:
+            self.assertEqual(order, ["drain", "capture"])
         finally:
             vi.close()
 

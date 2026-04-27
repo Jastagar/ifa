@@ -97,6 +97,7 @@ class VoiceInput(_InputMode):
         from ifa.voice.stt import transcribe_array
         from ifa.voice.wake_word import WAKE_CHUNK_SAMPLES, WakeWordListener
 
+        self._tts = tts_service  # stored so capture can wait on is_speaking
         self._listener = WakeWordListener(tts_service=tts_service)
         self._capture_utterance = capture_utterance
         self._transcribe = transcribe_array
@@ -163,6 +164,48 @@ class VoiceInput(_InputMode):
 
     # -- internals --
 
+    def _wait_for_tts_silence(self) -> bool:
+        """Block (in 50 ms slices) until ``tts.is_speaking`` is False.
+
+        Important for the follow-up path: ``arm_followup()`` is called
+        right after ``tts.speak()`` returns, but ``is_speaking`` stays
+        True through the cooldown window. Without this wait, capture
+        starts while Ifa's own TTS is still being heard by the mic and
+        Whisper transcribes Ifa's own words → infinite self-conversation.
+
+        Returns False if a stop was requested while waiting.
+        """
+        while self._tts is not None and self._tts.is_speaking:
+            if self._stop.is_set():
+                return False
+            time.sleep(0.05)
+        return True
+
+    def _drain_stream(self) -> None:
+        """Discard any audio frames buffered in the OS-level mic queue.
+
+        Called right before capture starts. During TTS playback (or any
+        time the voice loop is blocked elsewhere), the mic stream keeps
+        accumulating samples in PortAudio's ring buffer. If we don't
+        drain those, the next capture reads stale audio that may
+        contain Ifa's own voice from a moment ago.
+        """
+        try:
+            available = self._stream.read_available
+        except Exception:
+            return
+        while available and available > 0:
+            # Read in chunks to keep memory bounded, but drop the data.
+            n = min(available, 4096)
+            try:
+                self._stream.read(n)
+            except Exception:
+                break
+            try:
+                available = self._stream.read_available
+            except Exception:
+                break
+
     def _maybe_dump_wav(self, audio) -> None:
         """If IFA_VOICE_DEBUG_WAV is set to a directory, save each captured
         utterance as a WAV file there so the user can listen and verify
@@ -225,6 +268,15 @@ class VoiceInput(_InputMode):
                             self._followup_window_sec * 1000
                         )
                     }
+
+                # Block until Ifa is fully done speaking AND the cooldown
+                # has elapsed; otherwise capture catches her own voice
+                # via mic bleed-through, transcribes it, and triggers a
+                # self-feedback chat loop.
+                if not self._wait_for_tts_silence():
+                    return
+                # Discard whatever the OS buffered during TTS / cooldown.
+                self._drain_stream()
 
                 audio = self._capture_utterance(
                     read_chunk=self._read_capture_chunk, **capture_kwargs
