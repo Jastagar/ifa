@@ -1,10 +1,11 @@
 """Wake-word listener for Stage 2 voice mode.
 
-Continuously scores 16 kHz mono audio frames against openWakeWord's
-pretrained ``hey_jarvis`` model; returns as soon as the confidence score
-crosses a threshold. Designed to run on a background daemon thread
-spawned by ``VoiceInput`` (Unit 5); the main thread is busy running
-``agent_turn`` + TTS.
+Continuously scores 16 kHz mono audio frames against an openWakeWord
+model (default ``hey_mycroft``, configurable via ``IFA_WAKE_MODEL`` —
+either a built-in name or a path to a custom ``.onnx``); returns as
+soon as the confidence score crosses a threshold. Designed to run on
+a background daemon thread spawned by ``VoiceInput`` (Unit 5); the
+main thread is busy running ``agent_turn`` + TTS.
 
 Mute cooperation: on each frame, the listener reads ``tts.is_speaking``
 (see ``ifa.services.tts_service.TTSService``). While Ifa is speaking (or
@@ -47,19 +48,47 @@ import numpy as np
 # path to a custom .onnx model.
 _DEFAULT_MODEL = "hey_mycroft"
 
+# Where the listener falls back to if a path-style spec points at a
+# missing file (Stage 3 prep). Keep this in sync with what
+# scripts/setup_voice_models.py knows how to download. The fallback is
+# noisy on purpose — see the WARNING in __init__.
+_FALLBACK_MODEL = "hey_mycroft"
+
 # openWakeWord's expected frame size: 80 ms at 16 kHz.
 WAKE_CHUNK_SAMPLES = 1280
 
 
 def _resolve_model_spec() -> str:
+    """Read ``IFA_WAKE_MODEL`` from the environment, falling back to ``_DEFAULT_MODEL``.
+
+    Pure env lookup — no existence check. The path-vs-name detection
+    and missing-file fallback live in ``WakeWordListener.__init__`` so
+    they run per-construction (per the Stage 3 plan: existence-check
+    happens at listener-construction time, not module-import time).
+    """
     return os.environ.get("IFA_WAKE_MODEL", _DEFAULT_MODEL)
+
+
+def _is_path_spec(spec: str) -> bool:
+    """Return True if ``spec`` looks like a filesystem path, False if it's a built-in name.
+
+    Built-in openWakeWord model names are short tokens like ``alexa``,
+    ``hey_jarvis``, ``hey_mycroft``. None contain a path separator or a
+    file extension. Paths to custom ``.onnx`` models do.
+    """
+    return (
+        "/" in spec
+        or "\\" in spec
+        or spec.endswith(".onnx")
+        or spec.endswith(".tflite")
+    )
 
 
 def _derive_score_key(model_spec: str) -> str:
     """Score-dict key that ``Model.predict`` uses for a given spec.
 
     - Built-in name: the name is the key (``alexa`` → ``alexa``)
-    - File path: basename without extension (``/x/hey_ifa.onnx`` → ``hey_ifa``)
+    - File path: basename without extension (``/x/ifa.onnx`` → ``ifa``)
     """
     if os.path.exists(model_spec):
         return os.path.splitext(os.path.basename(model_spec))[0]
@@ -76,7 +105,7 @@ class _TTSProtocol(Protocol):
 
 
 class WakeWordListener:
-    """Listens for ``hey jarvis`` on a stream of audio chunks.
+    """Listens for the configured wake word on a stream of audio chunks.
 
     Parameters
     ----------
@@ -85,7 +114,11 @@ class WakeWordListener:
         loop drops frames while it's True.
     threshold:
         Override for the detection threshold. Defaults to
-        ``IFA_WAKE_THRESHOLD`` env var (falling back to 0.5).
+        ``IFA_WAKE_THRESHOLD`` env var (falling back to 0.7).
+    model_spec:
+        Override for the model spec — either a built-in name or a path
+        to a custom ``.onnx``. Defaults to the value of
+        ``IFA_WAKE_MODEL`` (built-in ``hey_mycroft`` if unset).
     """
 
     def __init__(
@@ -107,7 +140,30 @@ class WakeWordListener:
                 "or use text mode (IFA_MODE=text)."
             ) from exc
 
-        self._model_spec = model_spec or _resolve_model_spec()
+        # Resolve spec, then handle missing-file fallback per-construction
+        # (NOT at module-import time — see _resolve_model_spec docstring).
+        # If the resolved spec looks like a filesystem path AND that file
+        # is absent, log a prominent WARNING and substitute the built-in
+        # fallback model. This catches the post-Stage-3 case where the
+        # bundled ifa.onnx is somehow not on disk (failed install, fresh
+        # clone with corrupted blob, etc.) — without it, the listener
+        # would try to download_models() with the path string as a name
+        # and crash with a confusing error.
+        raw_spec = model_spec or _resolve_model_spec()
+        self._fallback_from: Optional[str] = None
+        if _is_path_spec(raw_spec) and not os.path.exists(raw_spec):
+            print(
+                f"[wake_word] WARNING: wake-word model not found at "
+                f"{raw_spec!r}; falling back to built-in {_FALLBACK_MODEL!r}. "
+                f"Wake word will respond to '{_FALLBACK_MODEL}' until the "
+                f"missing file is restored. Re-run scripts/setup_voice_models "
+                f"or restore the file at the expected path.",
+                flush=True,
+            )
+            self._fallback_from = raw_spec
+            self._model_spec = _FALLBACK_MODEL
+        else:
+            self._model_spec = raw_spec
         self._score_key = _derive_score_key(self._model_spec)
 
         try:
@@ -145,6 +201,18 @@ class WakeWordListener:
     def score_key(self) -> str:
         """The dict key under which scores arrive from ``Model.predict``."""
         return self._score_key
+
+    @property
+    def fallback_from(self) -> Optional[str]:
+        """Original spec that triggered missing-file fallback, or ``None`` if no fallback fired.
+
+        Surfaced so the launcher startup line can distinguish
+        ``wake=ifa (bundled)`` from ``wake=hey_mycroft (FALLBACK from
+        ifa.onnx)`` — without this, a missing-file fallback is silent
+        and a user sees a wake-word that doesn't match the configured
+        model with no obvious explanation.
+        """
+        return self._fallback_from
 
     def wait_for_wake(
         self,

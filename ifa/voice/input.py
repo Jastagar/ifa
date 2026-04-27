@@ -385,11 +385,21 @@ def init_input(tts_service: TTSService) -> _InputMode:
         return _TextMode()
 
     wake_name = voice._listener.score_key
+    fallback_from = voice._listener.fallback_from
     whisper_name = os.environ.get("IFA_WHISPER_MODEL", "small.en")
     threshold = voice._listener.threshold
     followup_sec = voice._followup_window_sec
+
+    # Surface the fallback explicitly. Otherwise a missing bundled file
+    # silently degrades the wake-word identity and the user's only
+    # signal is "saying X doesn't trigger anymore."
+    if fallback_from:
+        wake_display = f"{wake_name} (FALLBACK from missing {fallback_from!r})"
+    else:
+        wake_display = wake_name
+
     print(
-        f"[voice] mode=voice  wake={wake_name}  whisper={whisper_name}  "
+        f"[voice] mode=voice  wake={wake_display}  whisper={whisper_name}  "
         f"threshold={threshold:.2f}  followup={followup_sec:g}s"
     )
     print(f"[voice] say '{wake_name}' to speak; Ctrl-C to quit.")
