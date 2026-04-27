@@ -118,6 +118,19 @@ class VoiceInput(_InputMode):
             os.environ.get("IFA_FOLLOWUP_WINDOW_SEC", "5")
         )
         self._followup_until = 0.0  # monotonic deadline; 0 = no follow-up armed
+        # Set by arm_followup() — gates the loop's "wait for main thread to
+        # finish the turn before deciding wake vs follow-up." Without this
+        # the voice loop iterates immediately after queue.put, finds
+        # _followup_until still at 0, and falls into wait_for_wake — the
+        # user then has to say the wake word every turn even when
+        # follow-up is configured.
+        #
+        # Initial state is UNSET because the loop only waits on this
+        # event after a queue.put has actually occurred (tracked by
+        # ``needs_turn_wait`` in ``_run_loop``). Pre-setting it would
+        # cause the second iteration's wait to return immediately and
+        # drop straight into wait_for_wake — defeating the gate.
+        self._turn_complete = threading.Event()
 
     # -- public API --
 
@@ -143,6 +156,10 @@ class VoiceInput(_InputMode):
     def close(self) -> None:
         """Request the background thread to exit and stop the mic stream."""
         self._stop.set()
+        # Wake up _turn_complete.wait() if the thread is parked there
+        # waiting for a turn that will never come. Without this, the
+        # join below hits its timeout and the thread leaks for ~60s.
+        self._turn_complete.set()
         try:
             self._stream.stop()
             self._stream.close()
@@ -155,9 +172,13 @@ class VoiceInput(_InputMode):
         """Mark the next capture as follow-up — skip wake-word if within window.
 
         Called by the orchestrator right after ``tts.speak(reply)`` returns.
+        Also signals the voice thread that the current turn's main-thread
+        processing is complete, so the loop can re-evaluate
+        ``_in_followup_window`` instead of being stuck in ``wait_for_wake``.
         """
         if self._followup_window_sec > 0:
             self._followup_until = time.monotonic() + self._followup_window_sec
+        self._turn_complete.set()
 
     def _in_followup_window(self) -> bool:
         return time.monotonic() < self._followup_until
@@ -244,7 +265,24 @@ class VoiceInput(_InputMode):
         return data[:, 0]
 
     def _run_loop(self) -> None:
+        # True when the previous iteration produced a transcription that
+        # got queued for the main thread. Until the main thread calls
+        # arm_followup() (signalling "TTS reply done"), we must NOT
+        # iterate into wait_for_wake — otherwise the follow-up window
+        # never fires because _followup_until is still 0 at the moment
+        # of the iteration's wake-vs-followup decision.
+        needs_turn_wait = False
         while not self._stop.is_set():
+            if needs_turn_wait:
+                # Poll in 0.5s slices so close() sees _stop promptly.
+                while not self._stop.is_set():
+                    if self._turn_complete.wait(timeout=0.5):
+                        break
+                if self._stop.is_set():
+                    return
+                self._turn_complete.clear()
+                needs_turn_wait = False
+
             in_followup = self._in_followup_window()
             # Clear the arm now so a failed/empty follow-up doesn't bleed
             # into subsequent iterations.
@@ -310,10 +348,13 @@ class VoiceInput(_InputMode):
             if not text:
                 # VAD fired but Whisper heard nothing intelligible — just go
                 # back to listening; don't confuse the agent with empty input.
+                # No turn was produced, so don't wait for arm_followup —
+                # just iterate and try again immediately.
                 print("[voice] (no speech detected / empty transcript)")
                 continue
             print(f"[voice] heard: {text!r}")
             self._queue.put(text)
+            needs_turn_wait = True
 
 
 def init_input(tts_service: TTSService) -> _InputMode:

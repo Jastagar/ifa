@@ -399,6 +399,73 @@ class VoiceInputFollowupTests(unittest.TestCase):
         finally:
             vi.close()
 
+    def test_voice_loop_waits_for_arm_followup_before_next_decision(self):
+        """Race fix: voice thread must wait for the main thread to call
+        arm_followup() (or hit the 60s timeout) before it iterates back
+        and decides wake-vs-followup. Without this, voice loops back to
+        wait_for_wake immediately after queue.put, finds
+        _followup_until=0, and gets stuck — the user has to say the
+        wake word every turn instead of the follow-up window firing.
+        """
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+
+        # First iteration: wake fires, capture+transcribe runs, queue.put
+        # Second iteration: should NOT proceed until arm_followup or close.
+        wait_started_iteration_2 = threading.Event()
+
+        iteration_count = [0]
+        def fake_wait_for_wake(read_chunk):
+            iteration_count[0] += 1
+            if iteration_count[0] == 1:
+                return 0.9  # success — capture will run after this
+            # Iteration 2 should never reach here unless arm_followup fires
+            wait_started_iteration_2.set()
+            raise _LoopStop()
+
+        vi._listener.wait_for_wake = fake_wait_for_wake
+        vi._capture_utterance = MagicMock(return_value=np.zeros(100, dtype=np.float32))
+        vi._transcribe = MagicMock(return_value="hello")
+        vi.start()
+        try:
+            # Pull the first turn's transcription
+            self.assertEqual(vi.get(), "hello")
+            # Voice thread is now parked at _turn_complete.wait().
+            # wait_for_wake should NOT have been called for iteration 2.
+            time.sleep(0.2)
+            self.assertFalse(
+                wait_started_iteration_2.is_set(),
+                "voice loop iterated to wait_for_wake without waiting for arm_followup",
+            )
+            # Now arm follow-up: this should release the wait, AND because
+            # _followup_until is in the future, the next iteration goes
+            # to follow-up mode (skips wait_for_wake), so iteration 2's
+            # wait_for_wake is still NOT called.
+            vi.arm_followup()
+            time.sleep(0.2)
+            # The follow-up branch raises _LoopStop via fake_capture below.
+            # But we set arm_followup so the wait released; _in_followup_window
+            # was True; capture branch was taken; capture returned "hello"
+            # again (mocked), queue.put, loop iterates, waits again on event.
+        finally:
+            vi.close()
+
+    def test_arm_followup_releases_blocked_voice_thread_via_event(self):
+        """``arm_followup`` must set the turn_complete event even if it
+        also sets the deadline (so a follow-up=0 config still releases)."""
+        from ifa.voice.input import VoiceInput
+
+        with patch.dict(os.environ, {"IFA_FOLLOWUP_WINDOW_SEC": "0"}):
+            vi = VoiceInput(tts_service=_FakeTTS())
+        try:
+            vi._turn_complete.clear()
+            self.assertFalse(vi._turn_complete.is_set())
+            vi.arm_followup()
+            self.assertTrue(vi._turn_complete.is_set())
+        finally:
+            vi.close()
+
     def test_drain_stream_called_before_each_capture(self):
         """Audio buffered during TTS / cooldown must be discarded so
         capture reads fresh real-time audio, not stale Ifa-voice."""
