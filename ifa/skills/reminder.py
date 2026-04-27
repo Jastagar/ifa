@@ -3,7 +3,6 @@ import time
 import sqlite3
 
 from ifa.skills.base import Skill
-from ifa.core.brain import extract_reminder
 from ifa.services.db import DB_PATH
 
 
@@ -45,22 +44,6 @@ class ReminderSkill(Skill):
         ).start()
 
         return f"Okay, I will remind you to {task} in {seconds} seconds."
-
-    def handle(self, text: str) -> str:
-        data = extract_reminder(text)
-
-        task = data.get("task")
-        seconds = data.get("seconds")
-
-        if not task or not isinstance(task, str):
-            return "I couldn't understand the reminder."
-
-        try:
-            seconds = int(seconds)
-        except (TypeError, ValueError):
-            return "I couldn't understand the time for the reminder."
-
-        return self.schedule(task, seconds)
 
     def _reminder(self, task, seconds, reminder_id=None):
         time.sleep(seconds)

@@ -314,26 +314,64 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         self.assertAlmostEqual(tts._cooldown_sec, 2.0, places=4)
 
 
-class ManagerDecouplingTests(unittest.TestCase):
-    """Plan R14: manager.py must not construct its own TTSService."""
+class OrchestratorImportsAgentTurnTests(unittest.TestCase):
+    """Replaces the legacy ManagerDecouplingTests after the Stage 1 cleanup.
 
-    def test_manager_does_not_instantiate_tts_service(self):
-        manager_path = pathlib.Path(__file__).parent.parent / "skills" / "manager.py"
-        tree = ast.parse(manager_path.read_text())
+    Stage 0's manager.py and core/brain.py have been deleted; the
+    orchestrator now drives turns through ``agent_turn`` from
+    ``ifa.core.agent``. This guard catches any future regression
+    where someone re-introduces a manager-style routing layer
+    upstream of agent_turn.
+    """
 
-        bad_calls = []
+    def test_orchestrator_imports_agent_turn_from_core_agent(self):
+        orch_path = pathlib.Path(__file__).parent.parent / "core" / "orchestrator.py"
+        tree = ast.parse(orch_path.read_text())
+
+        imports_agent_turn_from_core_agent = False
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Name) and func.id == "TTSService":
-                    bad_calls.append(node.lineno)
-                elif isinstance(func, ast.Attribute) and func.attr == "TTSService":
-                    bad_calls.append(node.lineno)
+            if isinstance(node, ast.ImportFrom):
+                if node.module == "ifa.core.agent":
+                    if any(alias.name == "agent_turn" for alias in node.names):
+                        imports_agent_turn_from_core_agent = True
+                        break
+
+        self.assertTrue(
+            imports_agent_turn_from_core_agent,
+            "orchestrator.py must import agent_turn from ifa.core.agent — "
+            "Stage 1 ripped out the manager-style routing layer in favor "
+            "of agent_turn calling tools directly via the registry.",
+        )
+
+    def test_no_lingering_imports_of_deleted_modules(self):
+        """brain.py and skills/manager.py were deleted in Unit 7 — make
+        sure nothing reintroduces an import."""
+        ifa_root = pathlib.Path(__file__).parent.parent
+        bad_imports: list[tuple[str, int, str]] = []
+        for py_file in ifa_root.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            try:
+                tree = ast.parse(py_file.read_text())
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module in ("ifa.core.brain", "ifa.skills.manager"):
+                        bad_imports.append(
+                            (str(py_file.relative_to(ifa_root)), node.lineno, node.module)
+                        )
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name in ("ifa.core.brain", "ifa.skills.manager"):
+                            bad_imports.append(
+                                (str(py_file.relative_to(ifa_root)), node.lineno, alias.name)
+                            )
 
         self.assertEqual(
-            bad_calls,
+            bad_imports,
             [],
-            f"manager.py calls TTSService() at lines {bad_calls} — should receive it via handle_with_intent parameter",
+            f"Deleted modules are still being imported: {bad_imports}",
         )
 
 
