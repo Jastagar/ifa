@@ -182,29 +182,30 @@ class VoiceInput(_InputMode):
         return True
 
     def _drain_stream(self) -> None:
-        """Discard any audio frames buffered in the OS-level mic queue.
+        """Discard the audio frames currently buffered in the OS mic queue.
 
         Called right before capture starts. During TTS playback (or any
         time the voice loop is blocked elsewhere), the mic stream keeps
         accumulating samples in PortAudio's ring buffer. If we don't
         drain those, the next capture reads stale audio that may
         contain Ifa's own voice from a moment ago.
+
+        Single-shot: snapshots ``read_available`` once and discards
+        exactly that many frames. **Looping** until read_available
+        hits zero would never terminate on a live mic — PortAudio
+        feeds in fresh samples continuously and read_available stays
+        non-zero forever, blocking capture.
         """
         try:
-            available = self._stream.read_available
+            available = int(self._stream.read_available)
         except Exception:
             return
-        while available and available > 0:
-            # Read in chunks to keep memory bounded, but drop the data.
-            n = min(available, 4096)
-            try:
-                self._stream.read(n)
-            except Exception:
-                break
-            try:
-                available = self._stream.read_available
-            except Exception:
-                break
+        if available <= 0:
+            return
+        try:
+            self._stream.read(available)
+        except Exception:
+            pass
 
     def _maybe_dump_wav(self, audio) -> None:
         """If IFA_VOICE_DEBUG_WAV is set to a directory, save each captured
