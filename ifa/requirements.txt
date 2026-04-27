@@ -48,6 +48,7 @@ protobuf==7.34.1
 pycparser==3.0
 pygame==2.6.1
 Pygments==2.20.0
+python-dotenv==1.1.1
 pypiwin32==223; sys_platform == "win32"
 pyreadline3==3.5.4; sys_platform == "win32"
 pyttsx3==2.99

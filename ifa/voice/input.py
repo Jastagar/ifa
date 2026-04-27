@@ -163,6 +163,34 @@ class VoiceInput(_InputMode):
 
     # -- internals --
 
+    def _maybe_dump_wav(self, audio) -> None:
+        """If IFA_VOICE_DEBUG_WAV is set to a directory, save each captured
+        utterance as a WAV file there so the user can listen and verify
+        what the model is being asked to transcribe.
+
+        Useful when transcription returns empty / wrong: the WAV tells you
+        whether the bug is in capture (audio was wrong) or in STT (audio
+        was right, model returned wrong).
+        """
+        out_dir = os.environ.get("IFA_VOICE_DEBUG_WAV")
+        if not out_dir:
+            return
+        try:
+            import wave
+            import numpy as _np
+            os.makedirs(out_dir, exist_ok=True)
+            ts = int(time.monotonic() * 1000)
+            path = os.path.join(out_dir, f"ifa_capture_{ts}.wav")
+            audio_i16 = _np.clip(audio * 32768.0, -32768.0, 32767.0).astype(_np.int16)
+            with wave.open(path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16_000)
+                wf.writeframes(audio_i16.tobytes())
+            print(f"[voice] dumped WAV: {path}")
+        except Exception as exc:  # never let debug code break the loop
+            print(f"[voice] WAV dump failed: {exc}")
+
     def _read_wake_chunk(self):
         data, _ = self._stream.read(self._wake_chunk_samples)
         return data[:, 0]
@@ -201,7 +229,18 @@ class VoiceInput(_InputMode):
                 audio = self._capture_utterance(
                     read_chunk=self._read_capture_chunk, **capture_kwargs
                 )
-                print(f"[voice] captured {len(audio) / 16_000:.2f}s — transcribing...")
+                duration = len(audio) / 16_000
+                if len(audio):
+                    import numpy as _np  # local — avoid hot-path import on text mode
+                    peak = float(_np.abs(audio).max())
+                    rms = float(_np.sqrt(_np.mean(audio.astype(_np.float32) ** 2)))
+                    print(
+                        f"[voice] captured {duration:.2f}s "
+                        f"(peak={peak:.3f} rms={rms:.3f}) — transcribing..."
+                    )
+                    self._maybe_dump_wav(audio)
+                else:
+                    print(f"[voice] captured {duration:.2f}s — transcribing...")
                 text = self._transcribe(audio)
             except BaseException as exc:
                 # BaseException catches test sentinels (which inherit from it)
