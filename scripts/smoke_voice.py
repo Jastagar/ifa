@@ -33,9 +33,11 @@ from ifa.voice.wake_word import (
     WAKE_CHUNK_SAMPLES,
     WakeWordInitError,
     WakeWordListener,
+    _DEFAULT_MODEL,
 )
-# Which wake-word to probe: reads from IFA_WAKE_MODEL env var, defaults
-# to ``alexa`` (see ifa/voice/wake_word.py for rationale).
+# Which wake-word to probe: reads from IFA_WAKE_MODEL env var, falls
+# back to the listener's _DEFAULT_MODEL (the bundled ifa.onnx) so the
+# smoke harness always matches what the runtime would actually load.
 
 
 SAMPLE_RATE = 16_000
@@ -305,8 +307,9 @@ def smoke_record(duration_sec: float = 8.0) -> None:
     Gives us two proofs in one run:
       1. The WAV lets you listen and confirm the audio is clear speech.
       2. Offline chunk-by-chunk scoring eliminates any live-stream timing
-         artifacts — if alexa still scores 0 on a recorded "alexa" utterance,
-         the problem is the model/pipeline, not the mic loop.
+         artifacts — if the wake-word model still scores 0 on a recorded
+         utterance of the target word, the problem is the model/pipeline,
+         not the mic loop.
     """
     _banner(f"RECORD — capture {duration_sec:.0f}s, save WAV, offline-score")
     try:
@@ -315,7 +318,7 @@ def smoke_record(duration_sec: float = 8.0) -> None:
         print(f"[error] sounddevice import failed: {exc}")
         return
 
-    model_name = os.environ.get("IFA_WAKE_MODEL", "alexa")
+    model_name = os.environ.get("IFA_WAKE_MODEL", _DEFAULT_MODEL)
     prompt_word = (
         os.path.splitext(os.path.basename(model_name))[0].replace("_", " ")
         if os.path.exists(model_name)
