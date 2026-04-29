@@ -16,7 +16,7 @@ python 3.12.10
 - **Windows (PowerShell)**: double-click `run-ps.bat`
 - **macOS**: double-click `run.command` (first-time only: right-click → Open to bypass Gatekeeper)
 
-**Voice mode** (say "hey mycroft" to talk):
+**Voice mode** (say "ifa" to talk):
 
 - **Windows (cmd)**: double-click `run-voice.bat`
 - **Windows (PowerShell)**: double-click `run-voice-ps.bat`
@@ -24,7 +24,11 @@ python 3.12.10
 
 All launchers self-heal: create the Python venv, install dependencies, start Ollama, pull `qwen2.5:7b-instruct` if missing, pre-download the voice models, then launch Ifa. First run takes a few minutes (venv + ~5GB Ollama model + ~500MB voice models); subsequent runs are fast. Voice-mode runtime has `HF_HUB_OFFLINE=1` set, so once the models are cached the app never touches the network. The window always pauses at the end — read any error before closing.
 
-The wake word is `hey mycroft` for v1 (openWakeWord built-in). Custom "hey ifa" training is planned but deferred. Set `IFA_WAKE_MODEL=alexa` / `hey_jarvis` / `hey_rhasspy` to pick a different built-in, or point it at a custom `.onnx` file.
+The default wake word is the custom-trained single-word `ifa` model bundled at `ifa/models/ifa.onnx` (Stage 3). If that file is missing, the listener logs a WARNING and falls back to the built-in `hey_mycroft` so the system stays usable. Set `IFA_WAKE_MODEL=alexa` / `hey_jarvis` / `hey_mycroft` / `hey_rhasspy` in `.env` to pick a different built-in, or point it at any custom `.onnx`.
+
+## Learning the codebase
+
+Read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the bird's-eye view: how a turn flows, where every file lives, the three concepts that thread through everything, and the suggested reading order. Each module has its own teaching-quality docstring once you start drilling in.
 
 ### Prerequisites
 
