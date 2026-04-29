@@ -220,7 +220,7 @@ README.md                         (modified — voice-mode section: wake word is
 
 ---
 
-- [~] **Unit 4: Make `ifa.onnx` the new default**  *(partial: scaffolding landed in commit X — path-resolution refactor, missing-file fallback with WARNING, fallback_from property, startup-line distinction, .env.example future-state docs. Final flip — pointing `_DEFAULT_MODEL` at the bundled path and the test sweep — gated on Unit 2.)*
+- [x] **Unit 4: Make `ifa.onnx` the new default**  *(scaffolding landed in `93f7a24`; final flip + test sweep landed in subsequent commit. `_DEFAULT_MODEL` now resolves to the bundled `ifa/models/ifa.onnx` via `pathlib.Path(__file__).resolve().parent.parent / "models" / "ifa.onnx"`. test_wake_word.py predict-mock keys flipped from `hey_mycroft` → `ifa` across detect tests; new `test_init_resolves_default_to_bundled_ifa_path_no_download` asserts the path-based default; new `BundledOnnxIntegrityTests` class loads the real `.onnx` via onnxruntime to guard against committing a corrupted blob. 187/187 tests pass.)*
 
 **Goal:** Change `_DEFAULT_MODEL` to point at the bundled `.onnx`, with package-relative path resolution.
 

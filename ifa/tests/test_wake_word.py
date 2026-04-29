@@ -26,7 +26,7 @@ def _install_fake_openwakeword() -> tuple[MagicMock, MagicMock, MagicMock]:
 
     download_mock = MagicMock(name="download_models")
     model_instance = MagicMock(name="Model_instance")
-    model_instance.predict = MagicMock(return_value={"hey_mycroft": 0.0})
+    model_instance.predict = MagicMock(return_value={"ifa": 0.0})
     model_class = MagicMock(name="Model_class", return_value=model_instance)
 
     fake_utils_mod.download_models = download_mock
@@ -58,25 +58,38 @@ class _FakeTTS:
 class WakeWordListenerInitTests(unittest.TestCase):
     def setUp(self) -> None:
         self.download, self.model_cls, self.model_inst = _install_fake_openwakeword()
-        # Make predict return the right key for the default ("hey_mycroft") model
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.0}
+        # Make predict return the right key for the default ("ifa") model
+        self.model_inst.predict.return_value = {"ifa": 0.0}
 
     def tearDown(self) -> None:
         _uninstall_fake_openwakeword()
 
-    def test_init_downloads_and_instantiates_default_model_onnx(self):
+    def test_init_resolves_default_to_bundled_ifa_path_no_download(self):
+        """Stage 3: the default is the bundled ``ifa/models/ifa.onnx``
+        path, not a built-in name. Path-based specs skip the
+        download_models() step (paths are already on disk)."""
         from ifa.voice.wake_word import WakeWordListener
 
-        # Default is "hey_mycroft"; clear any env override that might be set
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("IFA_WAKE_MODEL", None)
             listener = WakeWordListener(tts_service=None)
 
-        self.assertEqual(listener.score_key, "hey_mycroft")
-        self.download.assert_called_once_with(model_names=["hey_mycroft"])
+        # Score key derives from the basename without extension
+        self.assertEqual(listener.score_key, "ifa")
+        # No fallback fired — the bundled file exists in the repo
+        self.assertIsNone(listener.fallback_from)
+        # Path-based default → download_models NOT called
+        self.download.assert_not_called()
         self.model_cls.assert_called_once()
         kwargs = self.model_cls.call_args.kwargs
-        self.assertEqual(kwargs["wakeword_models"], ["hey_mycroft"])
+        # Model() received exactly one path, ending in models/ifa.onnx
+        wakeword_models = kwargs["wakeword_models"]
+        self.assertEqual(len(wakeword_models), 1)
+        self.assertTrue(
+            wakeword_models[0].endswith("models/ifa.onnx")
+            or wakeword_models[0].endswith("models\\ifa.onnx"),
+            f"expected wakeword_models to end with models/ifa.onnx, got {wakeword_models[0]!r}",
+        )
         self.assertEqual(kwargs["inference_framework"], "onnx")
 
     def test_ifa_wake_model_env_override_selects_builtin(self):
@@ -197,12 +210,17 @@ class WakeWordListenerInitTests(unittest.TestCase):
         self.assertEqual(listener.threshold, 0.9)
 
     def test_init_raises_wakeword_init_error_on_download_failure(self):
+        """When IFA_WAKE_MODEL points at a built-in name and the
+        download fails, raise WakeWordInitError with an actionable
+        message. (The default is now the bundled ifa.onnx path, which
+        skips the download path entirely — so we explicitly exercise
+        the built-in branch here via env override.)"""
         from ifa.voice.wake_word import WakeWordListener, WakeWordInitError
 
         self.download.side_effect = OSError("offline")
-        with self.assertRaises(WakeWordInitError) as cm:
-            WakeWordListener(tts_service=None)
-        # Message should name the model + hint at first-run network requirement
+        with patch.dict(os.environ, {"IFA_WAKE_MODEL": "hey_mycroft"}):
+            with self.assertRaises(WakeWordInitError) as cm:
+                WakeWordListener(tts_service=None)
         msg = str(cm.exception)
         self.assertIn("hey_mycroft", msg)
         self.assertIn("internet", msg.lower())
@@ -235,10 +253,10 @@ class WakeWordListenerDetectTests(unittest.TestCase):
 
         # Two low frames, then two high in a row = fires on the 4th
         self.model_inst.predict.side_effect = [
-            {"hey_mycroft": 0.1},
-            {"hey_mycroft": 0.4},
-            {"hey_mycroft": 0.8},   # streak = 1, not yet enough
-            {"hey_mycroft": 0.9},   # streak = 2, fires with this score
+            {"ifa": 0.1},
+            {"ifa": 0.4},
+            {"ifa": 0.8},   # streak = 1, not yet enough
+            {"ifa": 0.9},   # streak = 2, fires with this score
         ]
 
         # Ensure IFA_WAKE_CONSECUTIVE default is 2
@@ -258,10 +276,10 @@ class WakeWordListenerDetectTests(unittest.TestCase):
 
         # Pattern: high, low, high, high — only the final two-in-a-row fires
         self.model_inst.predict.side_effect = [
-            {"hey_mycroft": 0.9},   # streak = 1
-            {"hey_mycroft": 0.1},   # reset to 0
-            {"hey_mycroft": 0.9},   # streak = 1
-            {"hey_mycroft": 0.9},   # streak = 2, fires
+            {"ifa": 0.9},   # streak = 1
+            {"ifa": 0.1},   # reset to 0
+            {"ifa": 0.9},   # streak = 1
+            {"ifa": 0.9},   # streak = 2, fires
         ]
 
         listener = WakeWordListener(tts_service=None, threshold=0.5)
@@ -273,7 +291,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
         from ifa.voice.wake_word import WakeWordListener
 
         self.model_inst.predict.side_effect = [
-            {"hey_mycroft": 0.9},   # with CONSECUTIVE=1 this fires immediately
+            {"ifa": 0.9},   # with CONSECUTIVE=1 this fires immediately
         ]
         with patch.dict(os.environ, {"IFA_WAKE_CONSECUTIVE": "1"}):
             listener = WakeWordListener(tts_service=None, threshold=0.5)
@@ -300,10 +318,10 @@ class WakeWordListenerDetectTests(unittest.TestCase):
         #   4: live, 0.9 → streak=2 → fires
         # So predict receives 4 calls total, 3 for live mic + 1 for silence.
         self.model_inst.predict.side_effect = [
-            {"hey_mycroft": 0.9},   # live #1
-            {"hey_mycroft": 0.0},   # silence call during mute (score ignored)
-            {"hey_mycroft": 0.9},   # live #2
-            {"hey_mycroft": 0.9},   # live #3 → fires
+            {"ifa": 0.9},   # live #1
+            {"ifa": 0.0},   # silence call during mute (score ignored)
+            {"ifa": 0.9},   # live #2
+            {"ifa": 0.9},   # live #3 → fires
         ]
 
         call_counter = [0]
@@ -334,7 +352,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
         with patch.dict(os.environ, {"IFA_WAKE_CONSECUTIVE": "1"}):
             listener = WakeWordListener(tts_service=tts, threshold=0.5)
 
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.9}
+        self.model_inst.predict.return_value = {"ifa": 0.9}
 
         call_counter = [0]
 
@@ -375,7 +393,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"IFA_WAKE_CONSECUTIVE": "1"}):
             listener = WakeWordListener(tts_service=None, threshold=0.5)
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.9}
+        self.model_inst.predict.return_value = {"ifa": 0.9}
 
         listener.wait_for_wake(
             read_chunk=lambda: np.zeros(1280, dtype=np.float32)
@@ -386,7 +404,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
         from ifa.voice.wake_word import WakeWordListener
 
         listener = WakeWordListener(tts_service=None, threshold=0.5)
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.9}
+        self.model_inst.predict.return_value = {"ifa": 0.9}
 
         int16_chunk = np.zeros(1280, dtype=np.int16)
         listener.wait_for_wake(read_chunk=lambda: int16_chunk)
@@ -398,7 +416,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
         from ifa.voice.wake_word import WakeWordListener
 
         listener = WakeWordListener(tts_service=None, threshold=0.5)
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.9}
+        self.model_inst.predict.return_value = {"ifa": 0.9}
 
         # Full-scale float32 sine-ish values in [-1, 1]
         float_chunk = np.linspace(-1.0, 1.0, 1280, dtype=np.float32)
@@ -421,7 +439,7 @@ class WakeWordListenerDetectTests(unittest.TestCase):
             listener = WakeWordListener(tts_service=None, threshold=0.5)
         self.model_inst.predict.side_effect = [
             {},  # empty dict — should be treated as score 0.0
-            {"hey_mycroft": 0.9},  # then a real detection
+            {"ifa": 0.9},  # then a real detection
         ]
         call_counter = [0]
 
@@ -431,6 +449,43 @@ class WakeWordListenerDetectTests(unittest.TestCase):
 
         listener.wait_for_wake(read_chunk=read)
         self.assertEqual(call_counter[0], 2)
+
+
+class BundledOnnxIntegrityTests(unittest.TestCase):
+    """Asserts the bundled ifa.onnx file in the repo is a real, loadable
+    ONNX model — not a corrupted blob that slipped through git or a
+    stub committed by mistake. Bypasses the openWakeWord fakes used
+    elsewhere in this file: we want REAL onnxruntime parsing here.
+    """
+
+    def test_bundled_ifa_onnx_exists(self):
+        import pathlib
+        repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+        path = repo_root / "ifa" / "models" / "ifa.onnx"
+        self.assertTrue(
+            path.exists(),
+            f"ifa/models/ifa.onnx must exist for the default wake-word model "
+            f"to load. Expected at: {path}",
+        )
+
+    def test_bundled_ifa_onnx_is_loadable_via_onnxruntime(self):
+        """Real onnxruntime parse — guards against committing a
+        corrupted or zero-byte file."""
+        import pathlib
+        import onnxruntime  # noqa: I1 — guarded import; onnxruntime is a runtime dep
+
+        repo_root = pathlib.Path(__file__).resolve().parent.parent.parent
+        path = repo_root / "ifa" / "models" / "ifa.onnx"
+        if not path.exists():
+            self.skipTest("ifa.onnx not present (separate test asserts existence)")
+
+        # If the file is corrupted, this raises. We don't mock here.
+        sess = onnxruntime.InferenceSession(
+            str(path), providers=["CPUExecutionProvider"]
+        )
+        # Sanity: the model should declare at least one input + one output
+        self.assertGreater(len(sess.get_inputs()), 0)
+        self.assertGreater(len(sess.get_outputs()), 0)
 
 
 if __name__ == "__main__":

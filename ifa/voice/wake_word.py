@@ -22,31 +22,33 @@ cycles.
 from __future__ import annotations
 
 import os
+import pathlib
 from typing import Callable, Optional, Protocol
 
 import numpy as np
 
-# Default wake-word model. Swap via IFA_WAKE_MODEL env var.
+# Default wake-word model: path to the bundled custom-trained ifa.onnx.
 #
-# Progression of defaults during Stage 2 development:
-#   1. ``hey_jarvis`` — original plan; hit 3/50 on this repo's owner's
-#      voice.
-#   2. ``alexa`` — swapped in thinking the larger training set would
-#      help; still failed on the same voice (0/20, max score 0.02).
-#   3. ``hey_mycroft`` — current default. Offline scored 1.0 on an
-#      8-second recording of the owner saying the wake word, vs. 0.02
-#      for alexa on the same voice. Mycroft's training data apparently
-#      fits better.
+# Progression of defaults across stages:
+#   Stage 2.1: ``hey_jarvis`` — original plan; hit 3/50 on owner's voice.
+#   Stage 2.2: ``alexa`` — larger training set didn't help; 0/20 live.
+#   Stage 2.3: ``hey_mycroft`` — built-in that fit. 10/10 live, but the
+#              "hey_" prefix is a name the user always disliked.
+#   Stage 3:   ``ifa.onnx`` — custom-trained on Colab via openWakeWord's
+#              automatic_model_training notebook. Single word "ifa",
+#              pronounced EYE-fah. Committed at ifa/models/ifa.onnx.
 #
-# Identity note: the "hey_" prefix is a compromise — the user would
-# prefer a prefix-free name. Custom-trained "hey ifa" (or just "ifa")
-# is the follow-up; it plugs in here with zero code change by pointing
-# IFA_WAKE_MODEL at a custom .onnx file.
+# Path is resolved package-relative via pathlib so it works regardless
+# of process cwd. The launchers cd to repo root anyway, but a developer
+# running ``python -m ifa.main`` from elsewhere should still get the
+# bundled model.
 #
-# IFA_WAKE_MODEL accepts either a built-in name (``alexa``,
+# IFA_WAKE_MODEL still accepts either a built-in name (``alexa``,
 # ``hey_jarvis``, ``hey_mycroft``, ``hey_rhasspy``) or a filesystem
-# path to a custom .onnx model.
-_DEFAULT_MODEL = "hey_mycroft"
+# path to a custom .onnx model — the env var overrides the default.
+_DEFAULT_MODEL = str(
+    pathlib.Path(__file__).resolve().parent.parent / "models" / "ifa.onnx"
+)
 
 # Where the listener falls back to if a path-style spec points at a
 # missing file (Stage 3 prep). Keep this in sync with what
