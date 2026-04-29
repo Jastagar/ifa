@@ -360,7 +360,8 @@ def smoke_record(duration_sec: float = 8.0) -> None:
     audio_i16 = np.clip(audio_f * 32768.0, -32768.0, 32767.0).astype(np.int16)
 
     import wave
-    out_path = "/tmp/ifa_wake_capture.wav"
+    import tempfile
+    out_path = os.path.join(tempfile.gettempdir(), "ifa_wake_capture.wav")
     with wave.open(out_path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
