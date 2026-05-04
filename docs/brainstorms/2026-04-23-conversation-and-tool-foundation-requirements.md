@@ -26,7 +26,7 @@ A **previously-started neural TTS brainstorm** ([docs/brainstorms/2026-04-23-neu
 
 ### LLM upgrade (replaces Mistral)
 
-- R7. Swap Mistral 7B for **qwen2.5:7b-instruct** (pulled as `qwen2.5:7b-instruct-q4_K_M` or equivalent instruct tag — the plain `qwen2.5:7b` tag resolves to the base model, which lacks the instruction-following needed for reliable tool calls). Runs locally via Ollama, pulled once per machine.
+- R7. Swap Mistral 7B for **llama3.1** (pulled as `llama3.1-q4_K_M` or equivalent instruct tag — the plain `qwen2.5:7b` tag resolves to the base model, which lacks the instruction-following needed for reliable tool calls). Runs locally via Ollama, pulled once per machine.
 - R8. Use Ollama's native function-calling API rather than shelling out to `ollama run` via subprocess. The current [ifa/core/brain.py](../../ifa/core/brain.py) uses `subprocess.run(["ollama", "run", MODEL, prompt])`; this becomes an HTTP call to Ollama's `/api/chat` endpoint with `tools=[...]` in the payload.
 - R9. `detect_intent()` and `handle_with_intent()` (the current primitive tool-routing) are **replaced** by the unified tool-call loop below — not preserved alongside. Individual skill logic (TimeSkill, ReminderSkill) is preserved as tool handlers.
 

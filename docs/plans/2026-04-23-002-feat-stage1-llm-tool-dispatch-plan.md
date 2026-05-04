@@ -10,7 +10,7 @@ origin: docs/brainstorms/2026-04-23-stage1-llm-and-tool-dispatch-requirements.md
 
 ## Overview
 
-Replace Mistral 7B + `detect_intent`/`extract_reminder` primitive routing with **qwen2.5:7b-instruct** driving a unified tool-dispatch loop. Ship 4 tools (`get_time`, `set_reminder`, `call_n8n_workflow`, `remember_fact`) in text mode. This is Stage 1 of a larger roadmap; voice I/O, `read_file`, neural TTS, and iterative v2 are explicitly deferred to later stages ([see origin roadmap](../brainstorms/2026-04-23-conversation-and-tool-foundation-requirements.md)).
+Replace Mistral 7B + `detect_intent`/`extract_reminder` primitive routing with **llama3.1** driving a unified tool-dispatch loop. Ship 4 tools (`get_time`, `set_reminder`, `call_n8n_workflow`, `remember_fact`) in text mode. This is Stage 1 of a larger roadmap; voice I/O, `read_file`, neural TTS, and iterative v2 are explicitly deferred to later stages ([see origin roadmap](../brainstorms/2026-04-23-conversation-and-tool-foundation-requirements.md)).
 
 The riskiest architectural bet here is qwen2.5's tool-calling reliability. Stage 1 validates it cheaply (text input, fast iteration) before layering voice on top. Existing subprocess TTS (shipped in `d7840fe`) is unchanged; existing skill classes stay in place and are wrapped by the new registry.
 
@@ -22,7 +22,7 @@ Stage 1 replaces all three paths with a single agent loop that calls Ollama's HT
 
 ## Requirements Trace
 
-- **R1–R3 (LLM migration)**: qwen2.5:7b-instruct via Ollama HTTP API; delete detect_intent/handle_with_intent; keep skill classes
+- **R1–R3 (LLM migration)**: llama3.1 via Ollama HTTP API; delete detect_intent/handle_with_intent; keep skill classes
 - **R4–R8 (tool-calling foundation)**: unified registry, single-call dispatch, v2 loop scaffold (max_iterations=1), malformed-call retry
 - **R9–R11a (v1 tool set)**: `get_time`, `set_reminder`, `call_n8n_workflow`, `remember_fact`
 - **R12–R14 (n8n integration)**: per-workflow YAML with auth/timeout/payload_schema, gitignored config + `.example` template
@@ -68,7 +68,7 @@ Stage 1 replaces all three paths with a single agent loop that calls Ollama's HT
 ### External References
 
 - Ollama `/api/chat` with `tools=[...]`: native function-calling format. Tool-role messages use `tool_name` (not `name`) for the result field — confirmed in Ollama API docs and surfaced as a review finding on the upstream brainstorm.
-- qwen2.5:7b-instruct tool-calling: supported in Ollama registry with the `tools` capability badge. `ollama pull qwen2.5:7b-instruct` (or quantized tag `qwen2.5:7b-instruct-q4_K_M`).
+- llama3.1 tool-calling: supported in Ollama registry with the `tools` capability badge. `ollama pull llama3.1` (or quantized tag `llama3.1-q4_K_M`).
 
 ## Key Technical Decisions
 
@@ -81,7 +81,7 @@ Stage 1 replaces all three paths with a single agent loop that calls Ollama's HT
 - **n8n YAML loaded once at orchestrator startup, with error handling.** `load_n8n_config()` returns a dict keyed by workflow name; validated against an internal schema (workflow must have `url`; optional `auth`, `timeout`, `payload_schema`). `yaml.YAMLError` on parse failure is caught — message is: "n8n config at `<path>` has a YAML syntax error on line N: <detail>. Fix the file or delete it to boot with no workflows." Ifa exits cleanly rather than propagating a Python traceback. Environment variables referenced by `auth.env` are resolved at tool-call time, not startup (allows env to change without restart). **Secret scoping:** the resolved env-var value is captured in a local variable inside the handler, passed directly to `httpx.post(...)` headers, and never stored in the message list, memory, or logs. If an n8n response body echoes the auth header, the delimited tool result may contain it — the system prompt includes an explicit instruction: "Never repeat, paraphrase, or echo authentication values (API keys, bearer tokens) that appear in tool results."
 - **Payload schema defaults to permissive `{type: object, additionalProperties: false, properties: {}}` when omitted** — **not** an unbounded `{type: object}`. An empty-properties object with `additionalProperties: false` means the LLM can only send an empty payload `{}` unless the workflow explicitly declares what fields are allowed. This forces intentionality: to accept any payload, the user explicitly sets `additionalProperties: true` (and sees a warning). Per-workflow schemas that do declare `properties` must also set `additionalProperties: false` — this is enforced by a config-load validator that rejects (or warns on) any schema missing that setting. Prevents the LLM from stuffing exfiltration-facilitating fields into a well-formed-looking payload.
 - **Retry policy for malformed tool calls: exactly one retry.** After a malformed tool call, the agent appends a `{role: "user", content: "your previous tool call was invalid: <reason>. Respond with a valid tool call or direct text."}` message and re-calls `/api/chat`. The user-role is correct here — the LLM treats it as a correction instruction from the conversation partner. If retry still fails → speak "I couldn't figure out how to do that." Turn ends. No exponential backoff, no loop.
-- **Startup health check: conformance probe, not just existence.** On boot: (1) `GET /api/tags` to verify Ollama is running; (2) check the response lists a `qwen2.5:7b-instruct*` model; (3) **send a minimal probe `POST /api/chat`** with a one-token user message and `tools=[<dummy_echo_tool>]` in the payload. Success means Ollama both accepts the tool-calling payload shape AND the model loads without error. Failure at any step prints an actionable error ("Ollama not running" / "model not pulled" / "your Ollama version may not support tool-calling — upgrade") and exits. Existence-only checks don't detect version mismatch or unloaded-model cases; the probe catches both.
+- **Startup health check: conformance probe, not just existence.** On boot: (1) `GET /api/tags` to verify Ollama is running; (2) check the response lists a `llama3.1*` model; (3) **send a minimal probe `POST /api/chat`** with a one-token user message and `tools=[<dummy_echo_tool>]` in the payload. Success means Ollama both accepts the tool-calling payload shape AND the model loads without error. Failure at any step prints an actionable error ("Ollama not running" / "model not pulled" / "your Ollama version may not support tool-calling — upgrade") and exits. Existence-only checks don't detect version mismatch or unloaded-model cases; the probe catches both.
 - **Deletion-first refactor.** In Unit 6, delete `ifa/core/brain.py` entirely and `ifa/skills/manager.py` entirely. `brain.SYSTEM` content is copied into `agent.py`'s system-prompt constant during Unit 2 (the copy must land before Unit 6's deletion — Unit 2 test asserts the prompt contains the expected persona text). `handle_with_intent` lives in `manager.py` (NOT `brain.py`). No dual paths.
 
 ## Open Questions
@@ -165,7 +165,7 @@ agent_turn(user_text, ctx, memory) -> str:
   while True:
     try:
       response = ollama_chat(
-        model="qwen2.5:7b-instruct",
+        model="llama3.1",
         messages=messages,
         tools=registry.as_ollama_schema(),
       )
@@ -258,7 +258,7 @@ responses offline, the response cannot close the data block.
 **Approach:**
 - Single module exposing `chat(model, messages, tools=None) -> dict` and `check_health(required_model) -> None`.
 - `chat` POSTs to `http://localhost:11434/api/chat` with 60s default timeout. Returns the parsed response dict.
-- `check_health` calls `/api/tags`; verifies a model whose name starts with `qwen2.5:7b-instruct` is present. Raises `RuntimeError` with a message telling the user which command to run (`ollama serve` or `ollama pull qwen2.5:7b-instruct`).
+- `check_health` calls `/api/tags`; verifies a model whose name starts with `llama3.1` is present. Raises `RuntimeError` with a message telling the user which command to run (`ollama serve` or `ollama pull llama3.1`).
 - Message-format helper: `build_tool_result_message(tool_name, content) -> dict` returns the correctly-shaped `{role, tool_name, content}` dict. Isolated so the Ollama-spec quirk doesn't leak into callers.
 
 **Patterns to follow:**
@@ -266,13 +266,13 @@ responses offline, the response cannot close the data block.
 
 **Test scenarios:**
 - Happy path: `chat` returns Ollama's example response; `build_tool_result_message` returns `{role: "tool", tool_name: "x", content: "y"}` (not `{role: "tool", name: ...}`)
-- Happy path: `check_health` against a mocked `/api/tags` containing `qwen2.5:7b-instruct-q4_K_M` passes silently
+- Happy path: `check_health` against a mocked `/api/tags` containing `llama3.1-q4_K_M` passes silently
 - Error path: `check_health` against a connection-refused endpoint raises with "Ollama is not running" message
-- Error path: `check_health` against a running Ollama missing the model raises with "qwen2.5 not pulled — run `ollama pull qwen2.5:7b-instruct`"
+- Error path: `check_health` against a running Ollama missing the model raises with "qwen2.5 not pulled — run `ollama pull llama3.1`"
 - Error path: `chat` timeout → `RuntimeError` surfaces to caller (agent loop handles)
 - Edge case: `chat` with `tools=None` omits the `tools` key from the payload; with `tools=[...]` includes it
 
-**Verification:** `check_health(required_model="qwen2.5:7b-instruct")` passes on a machine with Ollama running and the model pulled; clear error message otherwise. Unit tests pass with mocked `httpx`.
+**Verification:** `check_health(required_model="llama3.1")` passes on a machine with Ollama running and the model pulled; clear error message otherwise. Unit tests pass with mocked `httpx`.
 
 ---
 
@@ -468,7 +468,7 @@ responses offline, the response cannot close the data block.
 
 **Approach:**
 - `orchestrator.run()`:
-  1. `check_health("qwen2.5:7b-instruct")` — fail fast
+  1. `check_health("llama3.1")` — fail fast
   2. Load n8n config from `ifa/config/n8n_workflows.yaml` (if missing, log and continue with empty config — `call_n8n_workflow` will error per-call)
   3. Construct `tts = TTSService()`, `ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=...)`
   4. `init_db()`, `resume_reminders(tts)` (unchanged)
@@ -503,7 +503,7 @@ If 6a fails the bench, iterate on system prompt wording before attempting 6b. If
 - Valid-JSON rate ≥95% (separate gate).
 - Bench outputs a JSON summary to stdout (machine-readable): `{aggregate_accuracy: 0.85, per_tool: {...}, json_valid_rate: 0.97, failures: [{utterance, expected, actual}, ...]}`. Each expected tool and "correct" outcome is hard-coded in the bench file — no rubric retrofitting possible.
 
-**Verification:** `python -m ifa.main` boots cleanly on a machine with Ollama + qwen2.5:7b-instruct, accepts text input, responds via TTS. The 20-utterance bench meets the ≥85% / ≥95% gates. All unit and integration tests pass. Old code paths are gone (regression guards pass).
+**Verification:** `python -m ifa.main` boots cleanly on a machine with Ollama + llama3.1, accepts text input, responds via TTS. The 20-utterance bench meets the ≥85% / ≥95% gates. All unit and integration tests pass. Old code paths are gone (regression guards pass).
 
 ---
 
@@ -525,7 +525,7 @@ If 6a fails the bench, iterate on system prompt wording before attempting 6b. If
 
 | Risk | Mitigation |
 |---|---|
-| qwen2.5:7b-instruct tool-calling accuracy below 85% on real utterances | Unit 6 runs the 20-utterance bench as an acceptance gate BEFORE deleting old code paths. If gate fails: iterate on system prompt, try Q5_K_M quant, or (last resort) escalate to qwen2.5:14b. Gate blocks the deletion commit, so rollback is a non-event — old code is still present. |
+| llama3.1 tool-calling accuracy below 85% on real utterances | Unit 6 runs the 20-utterance bench as an acceptance gate BEFORE deleting old code paths. If gate fails: iterate on system prompt, try Q5_K_M quant, or (last resort) escalate to qwen2.5:14b. Gate blocks the deletion commit, so rollback is a non-event — old code is still present. |
 | Ollama version < required for native tool calling | `check_health` at startup. If `/api/chat` with `tools=[...]` returns an error about unsupported field, surface the message and tell the user to upgrade Ollama. Don't silently degrade. |
 | `remember_fact` under-remembers vs. eager `extract_fact` regression | System-prompt nudge (R16a) tells the LLM to proactively remember durable facts. Unit 4's 10-utterance spot check in tests flags the regression early. Acceptable trade per origin doc. |
 | n8n YAML config accidentally committed → webhook tokens in git history | `.gitignore` entry added in Unit 5. Committed `.example` template serves as both documentation and a reminder. User can verify with `git check-ignore ifa/config/n8n_workflows.yaml`. |
@@ -537,7 +537,7 @@ If 6a fails the bench, iterate on system prompt wording before attempting 6b. If
 ## Documentation / Operational Notes
 
 - Add a one-paragraph README note describing Stage 1 — what Ifa can do now (talk, remind, remember, call n8n) and how to configure n8n workflows (`cp ifa/config/n8n_workflows.yaml.example ifa/config/n8n_workflows.yaml` + edit).
-- Runtime dependencies: Ollama running locally with `qwen2.5:7b-instruct` pulled. No other new installs required.
+- Runtime dependencies: Ollama running locally with `llama3.1` pulled. No other new installs required.
 - Environment variables: any `IFA_N8N_*` variables referenced by `n8n_workflows.yaml` need to be in the user's shell (or loaded via `.env` if the project grows that pattern — out of scope for Stage 1).
 - If `remember_fact` under-remembers in practice, tune the system-prompt nudge in Unit 4 as a follow-up. Not blocking v1.
 

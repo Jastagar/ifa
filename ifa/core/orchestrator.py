@@ -32,7 +32,15 @@ from ifa.voice.input import init_input
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
 
-
+CONTACTS = {
+    "kavya":"",
+    "gurmehar":"+919814877949",
+    "papa":"+919876100414",
+    "mumma":"+919914100818",
+    "john":"+918872700414",
+    "jastagar":"+918872700414",
+    "myself":"+918872700414",
+}
 def resume_reminders(tts: TTSService, db_path: str) -> None:
     """Re-arm any reminders persisted in SQLite. Called once at startup."""
     conn = sqlite3.connect(db_path)
@@ -85,7 +93,7 @@ def run() -> None:
     # 3-5. DB init, TTS, register tools
     init_db()
     tts = TTSService()
-    ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config)
+    ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
     register_all()
 
     # 6. Restore reminders BEFORE entering the main loop

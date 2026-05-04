@@ -63,6 +63,11 @@ def load_n8n_config(path: str | Path) -> dict:
         )
 
     workflows = raw["workflows"] or {}
+    print("Existing Workflows:")
+    print()
+    for i in workflows:
+        print(i)
+    print()
     if not isinstance(workflows, dict):
         raise N8nConfigError("`workflows` must be a mapping of name → config.")
 
@@ -100,11 +105,18 @@ def _resolve_auth_header(auth_config: dict) -> tuple[str, str] | None:
 
 
 def _handler(args: dict, ctx: AgentContext) -> str:
+    print()
+    print()
+    print("Trying to run workflow...")
     workflow_name = args["workflow_name"]
+    print(f"Running workflow: {workflow_name}")
     payload = args.get("payload", {})
+    print(f"Payload: {payload}")
 
     workflow = ctx.n8n_config.get(workflow_name)
+    print(f"ctx workflow: {workflow}")
     if workflow is None:
+        print(f"workflow not found")
         return (
             f"No workflow named `{workflow_name}` is configured. "
             f"Available: {sorted(ctx.n8n_config.keys()) or 'none'}"
@@ -136,6 +148,7 @@ def _handler(args: dict, ctx: AgentContext) -> str:
             headers=headers,
             timeout=timeout,
         )
+        print(f"## REQUEST SENT ##")
     except httpx.TimeoutException:
         return f"Workflow `{workflow_name}` timed out after {timeout}s."
     except httpx.ConnectError as exc:
@@ -145,10 +158,11 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 
     # Truncate before returning — prevents context-window pollution
     body = response.text
+    print(f"Response Text: {body}")
     if len(body.encode("utf-8")) > MAX_RESPONSE_BYTES:
         body = body.encode("utf-8")[:MAX_RESPONSE_BYTES].decode("utf-8", errors="ignore")
         body = body + "\n... [response truncated at 2KB]"
-
+    print(f"Body: {body}")
     return f"Status {response.status_code}. Body:\n{body}"
 
 
@@ -158,6 +172,7 @@ TOOL = Tool(
         "Trigger a named n8n workflow by POSTing a JSON payload to its webhook. "
         "Use when the user asks to run an automation, send a notification, or "
         "perform an action defined in their n8n instance."
+        "incase user has not given a payload info, follow up with the user asking the required details"
     ),
     parameters={
         "type": "object",

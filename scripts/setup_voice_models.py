@@ -7,7 +7,7 @@ network afterward.
 Models fetched (the wake-word and Whisper variants come from the
 .env / shell env, so this script sees the same models the runtime
 will eventually load):
-  - openWakeWord (e.g. ``hey_mycroft``) — wake-word detector
+  - openWakeWord (e.g. ``ifa``) — wake-word detector
   - faster-whisper (e.g. ``small.en``) — STT
 
 Both are idempotent: if the model is already cached locally, the call
@@ -44,7 +44,7 @@ def _step(msg: str) -> None:
 
 
 def ensure_openwakeword_models() -> None:
-    model_name = os.environ.get("IFA_WAKE_MODEL", "hey_mycroft")
+    model_name = os.environ.get("IFA_WAKE_MODEL", "ifa")
     # Skip download if this is a custom .onnx path — those don't live in the cache.
     if os.path.exists(model_name):
         _step(f"wake-word model is a custom path: {model_name}  (no download)")

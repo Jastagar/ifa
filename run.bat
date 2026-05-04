@@ -1,6 +1,6 @@
 @echo off
 REM Ifa launcher for Windows. Double-click this file in Explorer to start.
-REM Self-heals: creates venv, installs deps, starts Ollama, pulls qwen2.5:7b-instruct
+REM Self-heals: creates venv, installs deps, starts Ollama, pulls llama3.1
 REM on first use, then runs python -m ifa.main.
 REM
 REM Structure: main logic is a `:main` subroutine. The outer script always
@@ -76,11 +76,11 @@ if errorlevel 1 (
 )
 :ollama_ok
 
-REM -------- 4. qwen2.5:7b-instruct pulled? --------
-ollama list 2>nul | findstr /I "qwen2.5:7b-instruct" >nul
+REM -------- 4. llama3.1 pulled? --------
+ollama list 2>nul | findstr /I "llama3.1" >nul
 if errorlevel 1 (
-    echo [setup] qwen2.5:7b-instruct not found. Pulling now (one-time, ~5GB)...
-    ollama pull qwen2.5:7b-instruct || exit /b 1
+    echo [setup] llama3.1 not found. Pulling now (one-time, ~5GB)...
+    ollama pull llama3.1 || exit /b 1
 )
 
 REM -------- 5. Voice-mode models pre-cached --------

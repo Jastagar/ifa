@@ -3,7 +3,7 @@
 # (macOS opens .command files in Terminal.app directly.)
 #
 # Self-heals: creates venv if missing, installs requirements, starts Ollama,
-# pulls qwen2.5:7b-instruct if not present, then runs python -m ifa.main.
+# pulls llama3.1 if not present, then runs python -m ifa.main.
 
 set -u
 
@@ -62,10 +62,10 @@ if ! curl -s -m 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
     fi
 fi
 
-# -------- 4. qwen2.5:7b-instruct pulled? --------
-if ! ollama list 2>/dev/null | grep -qi "qwen2.5:7b-instruct"; then
-    echo "[setup] qwen2.5:7b-instruct not found. Pulling now (one-time, ~5GB)..."
-    ollama pull qwen2.5:7b-instruct || die "ollama pull failed."
+# -------- 4. llama3.1 pulled? --------
+if ! ollama list 2>/dev/null | grep -qi "llama3.1"; then
+    echo "[setup] llama3.1 not found. Pulling now (one-time, ~5GB)..."
+    ollama pull llama3.1 || die "ollama pull failed."
 fi
 
 # -------- 5. Voice-mode models pre-cached --------

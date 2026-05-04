@@ -137,14 +137,14 @@ class WakeWordListenerInitTests(unittest.TestCase):
     def test_path_spec_falls_back_to_built_in_when_file_missing(self):
         """Stage 3 prep: if IFA_WAKE_MODEL points at a missing path,
         the listener prints a WARNING and routes through the built-in
-        fallback (hey_mycroft) rather than crashing on the absent file."""
+        fallback (ifa) rather than crashing on the absent file."""
         import io
         import contextlib
         from ifa.voice.wake_word import WakeWordListener
 
         # Adjust the fake's predict return-value so the post-fallback
-        # listener (loading hey_mycroft) finds the right score key.
-        self.model_inst.predict.return_value = {"hey_mycroft": 0.0}
+        # listener (loading ifa) finds the right score key.
+        self.model_inst.predict.return_value = {"ifa": 0.0}
 
         missing_path = "/nonexistent/dir/ifa.onnx"
         captured = io.StringIO()
@@ -153,19 +153,19 @@ class WakeWordListenerInitTests(unittest.TestCase):
             listener = WakeWordListener(tts_service=None)
 
         # Listener loaded the fallback model, not the missing path
-        self.assertEqual(listener.score_key, "hey_mycroft")
+        self.assertEqual(listener.score_key, "ifa")
         self.assertEqual(listener.fallback_from, missing_path)
         # download_models was called with the BUILT-IN name, not the path
-        self.download.assert_called_once_with(model_names=["hey_mycroft"])
+        self.download.assert_called_once_with(model_names=["ifa"])
         # Model() construction targeted the built-in name
         self.assertEqual(
-            self.model_cls.call_args.kwargs["wakeword_models"], ["hey_mycroft"]
+            self.model_cls.call_args.kwargs["wakeword_models"], ["ifa"]
         )
         # WARNING line went to stdout so the user sees the divergence
         out = captured.getvalue()
         self.assertIn("WARNING", out)
         self.assertIn(missing_path, out)
-        self.assertIn("hey_mycroft", out)
+        self.assertIn("ifa", out)
 
     def test_no_fallback_when_path_spec_actually_exists(self):
         """Existing-file path spec must NOT trigger the fallback path."""
@@ -183,7 +183,7 @@ class WakeWordListenerInitTests(unittest.TestCase):
         )
 
     def test_no_fallback_when_built_in_name_used(self):
-        """Built-in names ("alexa", "hey_mycroft") must not trip the
+        """Built-in names ("alexa", "ifa") must not trip the
         path-existence check even though they don't exist on disk."""
         from ifa.voice.wake_word import WakeWordListener
 
@@ -218,11 +218,11 @@ class WakeWordListenerInitTests(unittest.TestCase):
         from ifa.voice.wake_word import WakeWordListener, WakeWordInitError
 
         self.download.side_effect = OSError("offline")
-        with patch.dict(os.environ, {"IFA_WAKE_MODEL": "hey_mycroft"}):
+        with patch.dict(os.environ, {"IFA_WAKE_MODEL": "ifa"}):
             with self.assertRaises(WakeWordInitError) as cm:
                 WakeWordListener(tts_service=None)
         msg = str(cm.exception)
-        self.assertIn("hey_mycroft", msg)
+        self.assertIn("ifa", msg)
         self.assertIn("internet", msg.lower())
 
 

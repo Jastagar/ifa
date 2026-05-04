@@ -103,11 +103,11 @@ try {
         }
     }
 
-    # -------- 4. qwen2.5:7b-instruct pulled? --------
+    # -------- 4. llama3.1 pulled? --------
     $modelList = & ollama list 2>$null
     if (-not ($modelList -match 'qwen2\.5:7b-instruct')) {
-        Write-Step 'qwen2.5:7b-instruct not found. Pulling now (one-time, ~5GB)...'
-        ollama pull qwen2.5:7b-instruct
+        Write-Step 'llama3.1 not found. Pulling now (one-time, ~5GB)...'
+        ollama pull llama3.1
         if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
     }
 

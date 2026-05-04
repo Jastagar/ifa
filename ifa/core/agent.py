@@ -25,7 +25,7 @@ from ifa.services.ollama_client import build_tool_result_message, chat
 from ifa.tools import registry
 from ifa.tools.memory import load_facts
 
-MODEL = "qwen2.5:7b-instruct"
+MODEL = "qwen2.5:14b"
 MAX_ITERATIONS = 1  # tool-call hops per turn in Stage 1
 
 
@@ -37,8 +37,10 @@ def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
     section listing the user's known facts loaded from the DB.
     """
     persona = (
-        "You are Ifa, a concise and helpful assistant. "
-        "Always respond clearly in 1-2 sentences. No random text."
+        "You are Ifa (always pronounce as ay-fah), a concise and helpful assistant."
+        "Your master/creator/boss is Jastagar Singh Brar, you work from him and only him. you can address him by his name sometimes but mostly call him Sir/Boss"
+        "Always respond clearly in 1-2 sentences and keeps your self to the point. No random text. not any follow up questions on greetings like how can i assist or anything like that."
+        "You always take tool calls seriously and never pretend the results."
     )
     tool_framing = (
         f"Tool results appear wrapped in <{nonce}_START tool=NAME>...<{nonce}_END> "
@@ -50,7 +52,7 @@ def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
     remember_nudge = (
         "When the user shares durable personal information — names, preferences, "
         "recurring plans, relationships, anything worth recalling later — "
-        "proactively call `remember_fact` to persist it. Don't ask permission; "
+        "proactively call `remember_fact` to persist it. ask permission; "
         "just call the tool and continue the conversation naturally."
     )
     parts = [persona, tool_framing, remember_nudge]
@@ -123,14 +125,30 @@ def agent_turn(user_text: str, ctx: AgentContext, memory: Memory) -> str:
             # Dispatch each tool call and append results
             tool_hops += 1
             messages.append(assistant_msg)
+            
             for tc in tool_calls:
-                fn = tc["function"]
-                result = registry.dispatch(fn["name"], fn["arguments"], ctx)
+                fn = tc.get("function", {})
+                name = fn.get("name")
+                args = fn.get("arguments", {})
+
+                if not name:
+                    messages.append(build_tool_result_message(
+                        tool_name="unknown",
+                        content="ERROR: missing tool name"
+                    ))
+                    break
+
+                # 🔥 dispatch (already validates schema)
+                result = registry.dispatch(name, args, ctx)
+
                 messages.append(build_tool_result_message(
-                    tool_name=fn["name"],
-                    content=registry.delimit_as_data(nonce, fn["name"], result),
+                    tool_name=name,
+                    content=registry.delimit_as_data(nonce, name, result),
                 ))
-            continue  # loop back so LLM can generate the terminal response
+                if isinstance(result, str) and result.startswith("ERROR"):
+                    break
+
+            continue
 
         # Terminal text response (no tool calls)
         text = assistant_msg.get("content", "") or ""

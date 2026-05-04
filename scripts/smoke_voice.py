@@ -175,7 +175,7 @@ def smoke_transcribe(tts: TTSService) -> None:
 
     print(f"[info]  wake model = '{listener.score_key}'")
     print("[info]  whisper model loading on first transcription (lazy)...")
-    print("[info]  say 'hey mycroft' then speak. Ctrl-C to exit.")
+    print("[info]  say 'ifa' then speak. Ctrl-C to exit.")
     print()
 
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32")
@@ -222,12 +222,12 @@ def smoke_capture(tts: TTSService) -> None:
     """Drive Unit 3 (capture_utterance) against the real mic.
 
     Flow:
-      1. Wait for wake-word (hey_mycroft)
+      1. Wait for wake-word (ifa)
       2. Run capture_utterance until silence / max cap
       3. Save captured audio to /tmp/ifa_capture.wav
       4. Report duration + amplitude + where the cut happened
     """
-    _banner("Unit 3 — capture_utterance (say 'hey mycroft' then speak)")
+    _banner("Unit 3 — capture_utterance (say 'ifa' then speak)")
 
     try:
         import sounddevice as sd
@@ -243,7 +243,7 @@ def smoke_capture(tts: TTSService) -> None:
     from ifa.voice.capture import CAPTURE_SAMPLES, capture_utterance
 
     print(f"[info]  wake model = '{listener.score_key}'")
-    print("[info]  say 'hey mycroft' then speak your message.")
+    print("[info]  say 'ifa' then speak your message.")
     print(
         "[info]  capture ends after 1.5s silence (IFA_VAD_SILENCE_MS) "
         "or 30s (IFA_VAD_MAX_UTTERANCE_MS)."

@@ -15,3 +15,4 @@ class AgentContext:
     tts: TTSService
     db_path: str
     n8n_config: dict = field(default_factory=dict)
+    contacts: dict = field(default_factory=dict)

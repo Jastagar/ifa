@@ -10,7 +10,7 @@ supersedes-scope-of: docs/brainstorms/2026-04-23-conversation-and-tool-foundatio
 
 First slice of the broader conversation + tool-foundation roadmap ([full roadmap](2026-04-23-conversation-and-tool-foundation-requirements.md)). Delivers the tool-calling architecture without touching voice — user types to Ifa, Ifa runs tools (including n8n workflows), Ifa speaks replies via the existing subprocess TTS shipped in `d7840fe`.
 
-The sequencing rationale comes from review consensus: bundling voice I/O + LLM swap + tool architecture in one step compounds failure modes (mic/audio pipeline bugs mix with tool-call reliability bugs during debugging). This stage ships the riskiest architectural bet — that qwen2.5:7b-instruct produces reliable structured tool calls — cheaply, via text input where iteration is fast and unambiguous.
+The sequencing rationale comes from review consensus: bundling voice I/O + LLM swap + tool architecture in one step compounds failure modes (mic/audio pipeline bugs mix with tool-call reliability bugs during debugging). This stage ships the riskiest architectural bet — that llama3.1 produces reliable structured tool calls — cheaply, via text input where iteration is fast and unambiguous.
 
 Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and iterative v2 tool loop all layer on top of Stage 1. They become easier and safer to ship once the tool architecture is proven.
 
@@ -18,7 +18,7 @@ Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and i
 
 ### LLM migration
 
-- R1. Replace Mistral 7B with **qwen2.5:7b-instruct** (pulled via `ollama pull qwen2.5:7b-instruct` or the equivalent quantized tag e.g. `qwen2.5:7b-instruct-q4_K_M`). The plain `qwen2.5:7b` tag resolves to the base model, which lacks instruction-following for reliable tool use.
+- R1. Replace Mistral 7B with **llama3.1** (pulled via `ollama pull llama3.1` or the equivalent quantized tag e.g. `llama3.1-q4_K_M`). The plain `qwen2.5:7b` tag resolves to the base model, which lacks instruction-following for reliable tool use.
 - R2. Migrate [ifa/core/brain.py](../../ifa/core/brain.py) from `subprocess.run(["ollama", "run", ...])` to Ollama's HTTP `/api/chat` endpoint, using `httpx` (already in `ifa/requirements.txt`). Pass `tools=[...]` (the tool registry schema) on every call so the LLM can emit structured tool calls natively.
 - R3. Replace `detect_intent()` and `handle_with_intent()` in [ifa/core/brain.py](../../ifa/core/brain.py) + [ifa/skills/manager.py](../../ifa/skills/manager.py) with the unified tool dispatch loop described below. Keep `TimeSkill` and `ReminderSkill` as tool handlers — don't rewrite the handler logic.
 
@@ -81,8 +81,8 @@ Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and i
 - Typing `what time is it?` at the `You:` prompt produces an audible spoken reply with the current time within ~3-5 seconds.
 - Typing `remind me to stretch in 30 seconds` sets the reminder; the reminder fires audibly after 30s via the existing TTS.
 - Typing `trigger my home_summary workflow` (with a matching entry in `n8n_workflows.yaml`) POSTs to n8n, Ifa speaks a summary of the response.
-- qwen2.5:7b-instruct tool-call reliability is measured and documented: ≥85% correct tool selection and ≥95% valid-JSON rate across a 20-utterance test bench. This bench is the acceptance gate for shipping the LLM swap.
-- Switching machines (PC ↔ M4) requires only `ollama pull qwen2.5:7b-instruct` on the new machine. All other config (n8n workflow URLs, etc.) is user-editable YAML.
+- llama3.1 tool-call reliability is measured and documented: ≥85% correct tool selection and ≥95% valid-JSON rate across a 20-utterance test bench. This bench is the acceptance gate for shipping the LLM swap.
+- Switching machines (PC ↔ M4) requires only `ollama pull llama3.1` on the new machine. All other config (n8n workflow URLs, etc.) is user-editable YAML.
 - `ifa/config/n8n_workflows.yaml` is not tracked by git; `n8n_workflows.yaml.example` is.
 
 ## Scope Boundaries
@@ -104,7 +104,7 @@ Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and i
 ## Key Decisions
 
 - **Stage 1 over full bundle**: splits voice from tool architecture; validates the riskiest assumption (qwen2.5 tool reliability) with the cheapest debugging surface (text mode). Review consensus across product-lens, scope-guardian, and adversarial reviewers.
-- **qwen2.5:7b-instruct over Mistral + parser**: native tool-calling vs. permanent JSON-repair work. Model is pulled per-machine; hardware comfortable on both 4060 Ti and M4 Pro.
+- **llama3.1 over Mistral + parser**: native tool-calling vs. permanent JSON-repair work. Model is pulled per-machine; hardware comfortable on both 4060 Ti and M4 Pro.
 - **Ollama HTTP API over subprocess CLI**: structured output + tool schema pass-through requires the HTTP path. `httpx` already a dep.
 - **Single-call v1 + v2 scaffold**: ship sooner. Scaffold is one constant, not infrastructure. v2 design details deferred to a future brainstorm to prevent gold-plating v1.
 - **Tool context object (R4)**: handlers receive `ctx` carrying `tts`, `db_path`, etc. Preserves current DI pattern without making `TTSService` a module singleton or rewriting handler signatures.
@@ -118,7 +118,7 @@ Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and i
 
 ## Dependencies / Assumptions
 
-- `qwen2.5:7b-instruct` is available via Ollama and supports tool calling via `/api/chat` with a `tools=[...]` payload. Ollama version ≥0.3 required; newer (≥0.17) recommended for more robust qwen tool-parsing.
+- `llama3.1` is available via Ollama and supports tool calling via `/api/chat` with a `tools=[...]` payload. Ollama version ≥0.3 required; newer (≥0.17) recommended for more robust qwen tool-parsing.
 - `httpx` (already in `requirements.txt`) is used for Ollama HTTP calls. The official `ollama` Python client is an alternative worth considering during planning — it wraps tool_name formatting correctly at the cost of a new dep.
 - Ollama process is running and reachable at `http://localhost:11434`. Startup check is required — see R8 / Implementation questions.
 - User has n8n installed and reachable at URLs configured in `n8n_workflows.yaml`. If not, `call_n8n_workflow` returns a graceful error to the LLM.
@@ -132,7 +132,7 @@ Voice I/O (Stage 2), neural TTS, read_file with sandbox, custom wake word, and i
 
 ### Deferred to Implementation
 
-- Exact Ollama minimum version. Add a startup health check that refuses to boot if `/api/tags` is unreachable or qwen2.5:7b-instruct is not pulled.
+- Exact Ollama minimum version. Add a startup health check that refuses to boot if `/api/tags` is unreachable or llama3.1 is not pulled.
 - Structural delimiter text for untrusted tool results (R17). A short prompt-engineering task.
 - Per-workflow timeout default: plan proposes 30s; acceptable starting point, adjust based on observed n8n response times.
 - qwen2.5 quantization default: Q4_K_M is Ollama's standard. Validate on the 20-utterance bench before committing; step up to Q5 if accuracy is insufficient.

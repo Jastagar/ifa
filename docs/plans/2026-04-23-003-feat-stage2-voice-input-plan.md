@@ -50,7 +50,7 @@ Unit 6b (bundled):
 
 ## Scope Boundaries
 
-- **No custom "hey ifa" wake word** — built-in `"hey_mycroft"` ships after `hey_jarvis` (3/50) and `alexa` (0/20, 0.02 offline max) both failed on the repo owner's voice. Custom training deferred to a follow-up.
+- **No custom "hey ifa" wake word** — built-in `"ifa"` ships after `hey_jarvis` (3/50) and `alexa` (0/20, 0.02 offline max) both failed on the repo owner's voice. Custom training deferred to a follow-up.
 - **No Acoustic Echo Cancellation (AEC)** — mute-during-TTS is sufficient for v1. AEC is v3+ polish if ever.
 - **No streaming STT** — batch transcription on end-of-turn. Latency is acceptable for conversational use (sub-second small.en + the existing LLM/TTS cadence).
 - **No interruption** — user can't cut Ifa off mid-speech. Wait for TTS to finish, then trigger wake word.
@@ -85,14 +85,14 @@ Unit 6b (bundled):
 
 ### External references
 
-- openWakeWord 0.6.0 on PyPI. Ships ONNX models for "hey jarvis", "alexa", "hey mycroft". Must call `openwakeword.utils.download_models()` once (first run); must pass `inference_framework='onnx'` to avoid tflite-runtime dependency. License: Apache 2.0.
+- openWakeWord 0.6.0 on PyPI. Ships ONNX models for "hey jarvis", "alexa", "ifa". Must call `openwakeword.utils.download_models()` once (first run); must pass `inference_framework='onnx'` to avoid tflite-runtime dependency. License: Apache 2.0.
 - faster-whisper bundles `silero_vad_v6.onnx` in its assets directory and exposes `faster_whisper.vad.SileroVADModel` backed purely by `onnxruntime`. Using this avoids a separate `silero-vad` pip install (which would pull `torch` + `torchaudio` ~600MB — see origin review for detail).
 - `sounddevice.InputStream` with `samplerate=16000, dtype='float32', channels=1` matches faster-whisper's expected input directly (no resampling).
 
 ## Key Technical Decisions
 
 - **Mute-during-TTS via `TTSService.is_speaking` flag.** `TTSService` owns the flag. `speak()` sets it on entry, clears 500ms after `subprocess.run` returns. The wake-word listener checks this on each audio frame. Same mechanism covers both the main response path and reminder daemon TTS — zero additional plumbing.
-- **openWakeWord with built-in `"hey_mycroft"` for v1.** No custom training, no new external service. Model is chosen via `IFA_WAKE_MODEL` env var — accepts built-in names (`alexa`, `hey_jarvis`, `hey_mycroft`, `hey_rhasspy`) or a filesystem path to a custom `.onnx` (the forward slot for custom "hey ifa"). Selection process on the repo owner's voice: `hey_jarvis` hit 3/50 live; `alexa` hit 0/20 live and offline-max 0.02 (did not fit the voice at all); `hey_mycroft` offline-max 1.0 on an 8-second recording — adopted. Accepted under protest by the user (they dislike the "hey_" prefix). Functional > thematic until custom training lands.
+- **openWakeWord with built-in `"ifa"` for v1.** No custom training, no new external service. Model is chosen via `IFA_WAKE_MODEL` env var — accepts built-in names (`alexa`, `hey_jarvis`, `ifa`, `hey_rhasspy`) or a filesystem path to a custom `.onnx` (the forward slot for custom "hey ifa"). Selection process on the repo owner's voice: `hey_jarvis` hit 3/50 live; `alexa` hit 0/20 live and offline-max 0.02 (did not fit the voice at all); `ifa` offline-max 1.0 on an 8-second recording — adopted. Accepted under protest by the user (they dislike the "hey_" prefix). Functional > thematic until custom training lands.
 - **Live wake-word listener must NOT share its Model with any side consumer.** openWakeWord's `AudioFeatures` keeps a stateful rolling buffer; every `Model.predict()` call advances it. If a debug/display consumer calls `predict()` on the same instance in parallel with the detect loop, the buffer becomes phonetically misaligned and detection accuracy collapses (hit rate went to ~0 even with a capable model during Stage 2 development). Voice wiring in Unit 5 must observe this: anything that wants live scores uses a separate `Model` instance, or extracts state via a listener-owned callback — never a second `predict()` on the listener's model.
 - **Feature buffer requires continuous flow; mute feeds silence, not a gap.** During the TTS-mute window, the listener feeds int16 **silence** to `Model.predict()` every frame and discards the score. Skipping `predict()` entirely during mute (the obvious-looking approach) leaves the feature buffer frozen on the pre-mute audio — which still contains the wake-word that just fired — so the first post-mute chunk re-fires immediately, producing an infinite detection loop. Feeding silence keeps the buffer rolling in real time AND prevents Ifa's own TTS (bleeding into the mic) from contaminating features.
 - **Reset prediction buffer after every successful detection.** `Model.reset()` clears the prediction buffer so the next wait_for_wake cycle starts fresh. Combined with the silence-during-mute fix, this eliminates self-retriggering.
@@ -131,7 +131,7 @@ Unit 6b (bundled):
 
 ### Deferred to Implementation
 
-- **Wake-word confidence threshold.** Threshold 0.5 (openWakeWord's suggested default) was empirically too low — produced constant false positives on silence/ambient noise even with the `hey_mycroft` model that scored 1.0 on real wake words. v1 default raised to **0.7** (`IFA_WAKE_THRESHOLD`), paired with a **2-consecutive-frames-above-threshold** requirement (`IFA_WAKE_CONSECUTIVE`) to kill single-frame spikes. Latency cost: 80 ms. Both tunable.
+- **Wake-word confidence threshold.** Threshold 0.5 (openWakeWord's suggested default) was empirically too low — produced constant false positives on silence/ambient noise even with the `ifa` model that scored 1.0 on real wake words. v1 default raised to **0.7** (`IFA_WAKE_THRESHOLD`), paired with a **2-consecutive-frames-above-threshold** requirement (`IFA_WAKE_CONSECUTIVE`) to kill single-frame spikes. Latency cost: 80 ms. Both tunable.
 - **Cooldown exact value.** 500ms is a starting guess. Tunable.
 - **Mic device selection.** sounddevice default is the system default input. If the user's OS default is wrong (headset not detected, etc.), expose `IFA_AUDIO_INPUT_DEVICE` env var accepting a device name or index. Deferred unless it turns out to be needed.
 - **openWakeWord model cache location.** Defaults to HF cache (`~/.cache/huggingface/`). Acceptable. Alternative: project-local `ifa/models/` for explicit reproducibility. Pick during implementation.
@@ -446,7 +446,7 @@ class TTSService:
 
 **Requirements:** R10, R11
 
-**Dependencies:** Stage 1 Unit 6a (shipped), real Ollama running with qwen2.5:7b-instruct pulled
+**Dependencies:** Stage 1 Unit 6a (shipped), real Ollama running with llama3.1 pulled
 
 **Execution note:** Gate-first. Bench must exit 0 before any deletion.
 

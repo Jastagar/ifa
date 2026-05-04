@@ -45,7 +45,7 @@ def _install_fake_openwakeword() -> tuple[MagicMock, MagicMock]:
     fake_utils_mod = types.ModuleType("openwakeword.utils")
     download_mock = MagicMock(name="download_models")
     model_inst = MagicMock(name="Model_instance")
-    model_inst.predict = MagicMock(return_value={"hey_mycroft": 0.0})
+    model_inst.predict = MagicMock(return_value={"ifa": 0.0})
     model_cls = MagicMock(name="Model_class", return_value=model_inst)
     fake_utils_mod.download_models = download_mock
     fake_model_mod.Model = model_cls

@@ -1,6 +1,6 @@
 """Manual tool-call acceptance bench — NOT run in CI.
 
-Measures qwen2.5:7b-instruct's tool-selection accuracy against a fixed
+Measures llama3.1's tool-selection accuracy against a fixed
 20-utterance set. Gates Unit 6b (deletion of old code paths) in the plan:
 the bench's per-tool accuracy floors MUST be met before brain.py /
 manager.py / detect_intent / extract_fact are deleted.
@@ -10,7 +10,7 @@ Usage:
 
 Requires:
     - Ollama running locally
-    - `ollama pull qwen2.5:7b-instruct` (or quantized equivalent)
+    - `ollama pull llama3.1` (or quantized equivalent)
 
 Outputs a machine-readable JSON summary to stdout plus a human-readable
 per-utterance table. The JSON lets downstream scripts gate the deletion

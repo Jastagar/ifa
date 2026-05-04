@@ -5,78 +5,68 @@ import sys
 import tempfile
 import threading
 import time
-
+import numpy as np
+import queue
+from kokoro import KPipeline
+import sounddevice as sd
 from rich.console import Console
 
 _console = Console()
 
 
 class TTSService:
-    """Cross-platform text-to-speech via the OS's native speech binaries.
-
-    - **macOS**: `say -o <aiff>` synthesizes to a temp AIFF; `afplay` plays
-      it back and blocks on real completion. (`say` alone returns before
-      CoreAudio finishes draining, truncating audio on rapid successive
-      calls; `afplay` fixes that.)
-    - **Windows**: PowerShell's `System.Speech.Synthesis.SpeechSynthesizer`
-      via `-EncodedCommand`, with the spoken text passed through an
-      environment variable so no metacharacter in `text` can alter
-      command structure.
-    - **Linux**: `espeak`, with `--` as an argv separator so text starting
-      with `-` can't be misread as a flag.
-
-    Thread-safety: each `speak()` call spawns a fresh subprocess, so the
-    method is safe to call from daemon threads without additional gating.
-
-    Voice-input cooperation: `is_speaking` is True while a speak() call
-    is in flight AND for a short cooldown after it returns. The voice
-    wake-word loop reads this on every audio frame and drops audio while
-    it's True, so the mic can't self-trigger on Ifa's own output.
-
-    The cooldown is implemented with a monotonic expiry timestamp rather
-    than a `threading.Timer`: `Timer.cancel()` does not abort a callback
-    that has already begun running, so rapid back-to-back speak() calls
-    could expose a brief "mute off" window between the first timer's
-    clear-callback firing and the second speak()'s flag-set. The
-    timestamp approach has no such window — overlapping calls simply
-    extend `_mute_until`.
-    """
-
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._active_count = 0  # in-flight speak() calls across all threads
-        self._mute_until = 0.0  # monotonic expiry for post-TTS cooldown
-        self._cooldown_sec = (
-            float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
-        )
+        self._active_count = 0
+        self._mute_until = 0.0
+        self._cooldown_sec = float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
 
+        # 🔥 Kokoro model (initialize once)
+        self.kokoro_model = KPipeline(lang_code="a")
+
+        # 🔥 interrupt support
+        self._stop_event = threading.Event()
+
+    # ----------------------------
+    # STATE
+    # ----------------------------
     @property
     def is_speaking(self) -> bool:
-        """True while a speak() call is in flight or within the cooldown window."""
         with self._lock:
             return self._active_count > 0 or time.monotonic() < self._mute_until
 
+    def stop(self):
+        """Interrupt ongoing speech"""
+        self._stop_event.set()
+
+    # ----------------------------
+    # MAIN ENTRY
+    # ----------------------------
     def speak(self, text: str) -> None:
         if not text:
             return
 
         with self._lock:
             self._active_count += 1
+
+        self._stop_event.clear()
+
         try:
+            # ✅ Try Kokoro first
+            try:
+                self._speak_kokoro_stream(text)
+                return
+            except Exception as e:
+                _console.print(f"[yellow]Kokoro failed, falling back: {e}[/yellow]")
+
+            # ✅ Fallback
             if sys.platform == "darwin":
                 self._speak_macos(text)
             elif sys.platform == "win32":
                 self._speak_windows(text)
             else:
                 subprocess.run(["espeak", "--", text], check=False)
-        except FileNotFoundError as exc:
-            binary = getattr(exc, "filename", None) or "TTS binary"
-            _console.print(
-                f"[yellow]TTS: `{binary}` not found. Expected "
-                "`say`+`afplay` on macOS, `powershell` on Windows, `espeak` on Linux.[/yellow]"
-            )
-        except Exception as exc:
-            _console.print(f"[yellow]TTS failed: {exc}[/yellow]")
+
         finally:
             with self._lock:
                 self._active_count -= 1
@@ -84,6 +74,61 @@ class TTSService:
                     self._mute_until, time.monotonic() + self._cooldown_sec
                 )
 
+    # ----------------------------
+    # KOKORO STREAMING
+    # ----------------------------
+    def _speak_kokoro_stream(self, text: str):
+        audio_queue = queue.Queue(maxsize=8)
+        stop_signal = object()
+
+        def producer():
+            try:
+                # Kokoro yields (text, phonemes, audio)
+                for _, _, audio in self.kokoro_model(text, voice="af_heart"):
+                    if self._stop_event.is_set():
+                        break
+                    audio_queue.put(np.array(audio, dtype=np.float32))
+            except Exception as e:
+                _console.print(f"[red]Producer error: {e}[/red]")
+            finally:
+                audio_queue.put(stop_signal)
+
+        def consumer(sample_rate=22050):
+            stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=1024,
+            )
+            stream.start()
+
+            try:
+                while not self._stop_event.is_set():
+                    try:
+                        chunk = audio_queue.get(timeout=1)
+                    except queue.Empty:
+                        continue
+
+                    if chunk is stop_signal:
+                        break
+
+                    stream.write(chunk)
+            finally:
+                stream.stop()
+                stream.close()
+
+        t1 = threading.Thread(target=producer, daemon=True)
+        t2 = threading.Thread(target=consumer, daemon=True)
+
+        t1.start()
+        t2.start()
+
+        t1.join()
+        t2.join()
+
+    # ----------------------------
+    # FALLBACKS
+    # ----------------------------
     def _speak_macos(self, text: str) -> None:
         fd, aiff_path = tempfile.mkstemp(suffix=".aiff", prefix="ifa_tts_")
         os.close(fd)
@@ -97,19 +142,15 @@ class TTSService:
                 pass
 
     def _speak_windows(self, text: str) -> None:
-        # String-concat PowerShell commands with user-controlled text are
-        # exploitable — a newline in `text` terminates the single-quoted
-        # literal in -Command mode and the remainder is parsed as new PS
-        # statements. `text` can come from LLM output (prompt injection
-        # surface). Instead: pass text out-of-band via an environment
-        # variable and use -EncodedCommand so there is no interpolation.
         script = (
             "Add-Type -AssemblyName System.Speech; "
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
             '$s.Speak([System.Environment]::GetEnvironmentVariable("IFA_TTS_TEXT"))'
         )
+
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         env = {**os.environ, "IFA_TTS_TEXT": text}
+
         subprocess.run(
             ["powershell", "-NoProfile", "-EncodedCommand", encoded],
             env=env,

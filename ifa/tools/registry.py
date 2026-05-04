@@ -46,6 +46,48 @@ def clear() -> None:
     """Reset the registry. Test-only — production code registers once at import time."""
     _TOOLS.clear()
 
+def execute_chain(tool_calls: list[dict], ctx: AgentContext, nonce: str) -> list[str]:
+    results = []
+
+    for step in tool_calls:
+        name = step.get("name")
+        args = step.get("args", {})
+
+        if not name:
+            results.append("ERROR: missing tool name")
+            break
+
+        result = dispatch(name, args, ctx)
+
+        # wrap result safely (your existing security layer)
+        wrapped = delimit_as_data(nonce, name, result)
+        results.append(wrapped)
+
+        # stop chain on failure
+        if result.startswith("ERROR"):
+            break
+
+    return results
+
+def validate_plan(tool_calls: list[dict]) -> str | None:
+    if not isinstance(tool_calls, list):
+        return "ERROR: plan must be a list"
+
+    for step in tool_calls:
+        if not isinstance(step, dict):
+            return "ERROR: each step must be an object"
+
+        if "name" not in step:
+            return "ERROR: missing tool name"
+
+        if get(step["name"]) is None:
+            return f"ERROR: unknown tool `{step['name']}`"
+
+        if "args" in step and not isinstance(step["args"], dict):
+            return "ERROR: args must be an object"
+
+    return None
+
 
 def as_ollama_schema() -> list[dict]:
     """Return the tool list in Ollama's /api/chat `tools` field format."""

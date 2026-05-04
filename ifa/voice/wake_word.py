@@ -1,7 +1,7 @@
 """Wake-word listener for Stage 2 voice mode.
 
 Continuously scores 16 kHz mono audio frames against an openWakeWord
-model (default ``hey_mycroft``, configurable via ``IFA_WAKE_MODEL`` —
+model (default ``ifa``, configurable via ``IFA_WAKE_MODEL`` —
 either a built-in name or a path to a custom ``.onnx``); returns as
 soon as the confidence score crosses a threshold. Designed to run on
 a background daemon thread spawned by ``VoiceInput`` (Unit 5); the
@@ -32,7 +32,7 @@ import numpy as np
 # Progression of defaults across stages:
 #   Stage 2.1: ``hey_jarvis`` — original plan; hit 3/50 on owner's voice.
 #   Stage 2.2: ``alexa`` — larger training set didn't help; 0/20 live.
-#   Stage 2.3: ``hey_mycroft`` — built-in that fit. 10/10 live, but the
+#   Stage 2.3: ``ifa`` — built-in that fit. 10/10 live, but the
 #              "hey_" prefix is a name the user always disliked.
 #   Stage 3:   ``ifa.onnx`` — custom-trained on Colab via openWakeWord's
 #              automatic_model_training notebook. Single word "ifa",
@@ -44,7 +44,7 @@ import numpy as np
 # bundled model.
 #
 # IFA_WAKE_MODEL still accepts either a built-in name (``alexa``,
-# ``hey_jarvis``, ``hey_mycroft``, ``hey_rhasspy``) or a filesystem
+# ``hey_jarvis``, ``ifa``, ``hey_rhasspy``) or a filesystem
 # path to a custom .onnx model — the env var overrides the default.
 _DEFAULT_MODEL = str(
     pathlib.Path(__file__).resolve().parent.parent / "models" / "ifa.onnx"
@@ -54,7 +54,7 @@ _DEFAULT_MODEL = str(
 # missing file (Stage 3 prep). Keep this in sync with what
 # scripts/setup_voice_models.py knows how to download. The fallback is
 # noisy on purpose — see the WARNING in __init__.
-_FALLBACK_MODEL = "hey_mycroft"
+_FALLBACK_MODEL = "ifa"
 
 # openWakeWord's expected frame size: 80 ms at 16 kHz.
 WAKE_CHUNK_SAMPLES = 1280
@@ -75,7 +75,7 @@ def _is_path_spec(spec: str) -> bool:
     """Return True if ``spec`` looks like a filesystem path, False if it's a built-in name.
 
     Built-in openWakeWord model names are short tokens like ``alexa``,
-    ``hey_jarvis``, ``hey_mycroft``. None contain a path separator or a
+    ``hey_jarvis``, ``ifa``. None contain a path separator or a
     file extension. Paths to custom ``.onnx`` models do.
     """
     return (
@@ -120,7 +120,7 @@ class WakeWordListener:
     model_spec:
         Override for the model spec — either a built-in name or a path
         to a custom ``.onnx``. Defaults to the value of
-        ``IFA_WAKE_MODEL`` (built-in ``hey_mycroft`` if unset).
+        ``IFA_WAKE_MODEL`` (built-in ``ifa`` if unset).
     """
 
     def __init__(
@@ -209,7 +209,7 @@ class WakeWordListener:
         """Original spec that triggered missing-file fallback, or ``None`` if no fallback fired.
 
         Surfaced so the launcher startup line can distinguish
-        ``wake=ifa (bundled)`` from ``wake=hey_mycroft (FALLBACK from
+        ``wake=ifa (bundled)`` from ``wake=ifa (FALLBACK from
         ifa.onnx)`` — without this, a missing-file fallback is silent
         and a user sees a wake-word that doesn't match the configured
         model with no obvious explanation.
