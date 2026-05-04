@@ -1,9 +1,41 @@
-"""Ifa entry point.
+"""Ifa entry point — first thing run by ``python -m ifa.main``.
 
-Loads ``.env`` (if present) at the top BEFORE any module reads env
-vars, then hands off to the orchestrator. Settings already exported
-in the parent shell / launcher take precedence over .env (the
-default ``override=False`` semantics of python-dotenv).
+If you're learning the codebase, read this file first, then
+``ifa/core/orchestrator.py`` (the main loop), then
+``ifa/core/agent.py`` (the LLM tool-call loop). After that, peek into
+``ifa/voice/wake_word.py`` and ``ifa/voice/input.py`` for the voice
+pipeline. ``docs/ARCHITECTURE.md`` has the full call graph if you want
+the bird's-eye view first.
+
+What this file does:
+
+1. **Load ``.env``** at the very top, before anything else imports.
+   Order matters — every module reads env vars at import time
+   (``os.environ.get(...)`` calls), so the .env values must be in
+   ``os.environ`` before those reads happen. ``override=False`` means
+   shell-exported / launcher-set values still win, which is the
+   semantics we want — a developer running ``IFA_WHISPER_DEVICE=cpu
+   python -m ifa.main`` should override the .env default.
+
+2. **Print an env summary** so the developer can see at a glance which
+   ``IFA_*`` knobs are actually in effect. Useful for debugging "why
+   isn't my .env change taking effect?" — if the variable shows up in
+   this dump with the right value, the runtime saw it.
+
+3. **Hand off to the orchestrator** (``ifa.core.orchestrator.run``).
+   That function does the actual startup: Ollama health check, n8n
+   config load, DB init, TTS setup, tool registration, reminder
+   recovery, then the main loop.
+
+Why these three steps live in main.py and not orchestrator.run:
+
+- ``.env`` loading must happen before ANY ``ifa.*`` import — including
+  the orchestrator's own imports. So it can't live in run().
+- The env summary is debugging output for the developer, not part of
+  the assistant's behavior. Keeping it at the entry point makes the
+  separation clear.
+- The orchestrator stays focused on "starting Ifa", not on "how was
+  this process launched".
 """
 import os
 import pathlib
