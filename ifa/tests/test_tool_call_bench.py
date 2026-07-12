@@ -32,7 +32,7 @@ import sys
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
-from ifa.core import agent
+from ifa.core import agent_stream
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
 from ifa.services.ollama_client import chat
@@ -117,7 +117,7 @@ def _observe_tool_call(user_text: str) -> tuple[str | None, bool]:
     original = agent_module.chat
     agent_module.chat = observer
     try:
-        agent.agent_turn(user_text, ctx, memory)
+        agent_stream.agent_turn(user_text, ctx, memory)
     finally:
         agent_module.chat = original
 
@@ -172,7 +172,7 @@ def run_bench() -> dict:
     )
 
     return {
-        "model": agent.MODEL,
+        "model": agent_stream.MODEL,
         "total": len(BENCH),
         "aggregate_accuracy": aggregate_accuracy,
         "json_valid_rate": json_valid_rate,

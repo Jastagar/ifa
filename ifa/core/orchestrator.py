@@ -20,7 +20,10 @@ import sys
 import threading
 import time
 
-from ifa.core.agent import MODEL, agent_turn
+from ifa.core.agent_stream import (
+    MODEL,
+    agent_turn_stream,
+)
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
@@ -29,17 +32,12 @@ from ifa.services.tts_service import TTSService
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import init_input
+from ifa.utils.speech_queue import SpeechQueue
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
 
 CONTACTS = {
-    "kavya":"",
-    "gurmehar":"+919814877949",
-    "papa":"+919876100414",
-    "mumma":"+919914100818",
-    "john":"+918872700414",
-    "jastagar":"+918872700414",
-    "myself":"+918872700414",
+    "john":"+918876700414",
 }
 def resume_reminders(tts: TTSService, db_path: str) -> None:
     """Re-arm any reminders persisted in SQLite. Called once at startup."""
@@ -93,6 +91,9 @@ def run() -> None:
     # 3-5. DB init, TTS, register tools
     init_db()
     tts = TTSService()
+    speech_queue = SpeechQueue(
+        handler=tts.speak
+    )
     ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
     register_all()
 
@@ -115,9 +116,16 @@ def run() -> None:
         if user_input.lower() in ["exit", "quit"]:
             break
 
-        reply = agent_turn(user_input, ctx, memory)
-        print("Ifa:", reply)
-        tts.speak(reply)
+        def on_sentence(sentence: str):
+            print(f"Ifa: {sentence}")
+            speech_queue.enqueue(sentence)
+
+        reply = agent_turn_stream(
+            user_text=user_input,
+            ctx=ctx,
+            memory=memory,
+            on_sentence=on_sentence,
+        )
         # Arm the follow-up window: in voice mode, the next utterance
         # within ~5s skips the wake word; text mode is a no-op.
         input_mode.arm_followup()

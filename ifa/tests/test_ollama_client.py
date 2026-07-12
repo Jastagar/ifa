@@ -3,6 +3,7 @@
 Run: python -m unittest ifa.tests.test_ollama_client -v
 """
 import unittest
+import os
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -13,6 +14,8 @@ from ifa.services.ollama_client import (
     check_health,
 )
 
+
+MODEL=os.environ.get("IFA_OLLAMA_MODEL","qwen2.5:14b")
 
 def _mock_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
     """Fabricate an httpx.Response with json() + raise_for_status()."""
@@ -45,7 +48,7 @@ class ChatTests(unittest.TestCase):
     def test_posts_to_api_chat(self):
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "hi"}})) as post:
-            result = chat("qwen2.5:14b", [{"role": "user", "content": "hello"}])
+            result = chat(MODEL, [{"role": "user", "content": "hello"}])
 
         self.assertEqual(result, {"message": {"content": "hi"}})
         post.assert_called_once()
@@ -56,7 +59,7 @@ class ChatTests(unittest.TestCase):
         tools = [{"type": "function", "function": {"name": "x", "description": "y", "parameters": {}}}]
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})) as post:
-            chat("qwen2.5:14b", [{"role": "user", "content": "hi"}], tools=tools)
+            chat(MODEL, [{"role": "user", "content": "hi"}], tools=tools)
 
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["tools"], tools)
@@ -64,7 +67,7 @@ class ChatTests(unittest.TestCase):
     def test_omits_tools_when_none(self):
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})) as post:
-            chat("qwen2.5:14b", [{"role": "user", "content": "hi"}])
+            chat(MODEL, [{"role": "user", "content": "hi"}])
 
         payload = post.call_args.kwargs["json"]
         self.assertNotIn("tools", payload)
@@ -72,18 +75,18 @@ class ChatTests(unittest.TestCase):
     def test_sends_stream_false(self):
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {}})) as post:
-            chat("qwen2.5:14b", [{"role": "user", "content": "hi"}])
+            chat(MODEL, [{"role": "user", "content": "hi"}])
         self.assertFalse(post.call_args.kwargs["json"]["stream"])
 
     def test_raises_on_http_error(self):
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(500)):
             with self.assertRaises(httpx.HTTPStatusError):
-                chat("qwen2.5:14b", [{"role": "user", "content": "hi"}])
+                chat(MODEL, [{"role": "user", "content": "hi"}])
 
 
 class CheckHealthTests(unittest.TestCase):
-    MODEL = "qwen2.5:14b"
+    MODEL = MODEL
 
     def _mock_tags(self, model_names: list[str]) -> MagicMock:
         return _mock_response(200, {"models": [{"name": n} for n in model_names]})
@@ -118,7 +121,7 @@ class CheckHealthTests(unittest.TestCase):
             return _mock_response(200)
 
         with patch("ifa.services.ollama_client.httpx.get",
-                   return_value=self._mock_tags(["qwen2.5:14b"])), \
+                   return_value=self._mock_tags([MODEL])), \
              patch("ifa.services.ollama_client.httpx.post",
                    side_effect=post_fails_on_chat):
             with self.assertRaises(RuntimeError) as cm:

@@ -1,48 +1,67 @@
-import base64
 import os
-import subprocess
-import sys
-import tempfile
+import re
 import threading
-import time
-import numpy as np
 import queue
-from kokoro import KPipeline
+import time
+
+import numpy as np
 import sounddevice as sd
+import torch
+
+from chatterbox.tts_turbo import ChatterboxTurboTTS
 from rich.console import Console
 
 _console = Console()
 
-
 class TTSService:
-    def __init__(self) -> None:
+    def __init__(self):
+
         self._lock = threading.Lock()
         self._active_count = 0
         self._mute_until = 0.0
-        self._cooldown_sec = float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
 
-        # 🔥 Kokoro model (initialize once)
-        self.kokoro_model = KPipeline(lang_code="a")
+        self._cooldown_sec = (
+            float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
+        )
 
-        # 🔥 interrupt support
         self._stop_event = threading.Event()
 
-    # ----------------------------
-    # STATE
-    # ----------------------------
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+        
+        _console.print("PROCESSOR TYPE :",torch.cuda.is_available())
+
+        _console.print(
+            f"Loading Chatterbox Turbo on {self.device}"
+        )
+
+        self.model = ChatterboxTurboTTS.from_pretrained(
+            device=self.device
+        )
+
+        self.voice_path = os.environ.get(
+            "IFA_VOICE_SAMPLE",
+            "ifa/audios/voice.wav"
+        )
+
     @property
-    def is_speaking(self) -> bool:
+    def is_speaking(self):
+
         with self._lock:
-            return self._active_count > 0 or time.monotonic() < self._mute_until
+            return (
+                self._active_count > 0
+                or time.monotonic() < self._mute_until
+            )
 
     def stop(self):
-        """Interrupt ongoing speech"""
         self._stop_event.set()
 
-    # ----------------------------
-    # MAIN ENTRY
-    # ----------------------------
-    def speak(self, text: str) -> None:
+    def speak(self, text: str):
+
         if not text:
             return
 
@@ -52,60 +71,75 @@ class TTSService:
         self._stop_event.clear()
 
         try:
-            # ✅ Try Kokoro first
-            try:
-                self._speak_kokoro_stream(text)
-                return
-            except Exception as e:
-                _console.print(f"[yellow]Kokoro failed, falling back: {e}[/yellow]")
-
-            # ✅ Fallback
-            if sys.platform == "darwin":
-                self._speak_macos(text)
-            elif sys.platform == "win32":
-                self._speak_windows(text)
-            else:
-                subprocess.run(["espeak", "--", text], check=False)
+            self._speak_stream(text)
 
         finally:
+
             with self._lock:
                 self._active_count -= 1
+
                 self._mute_until = max(
-                    self._mute_until, time.monotonic() + self._cooldown_sec
+                    self._mute_until,
+                    time.monotonic() + self._cooldown_sec,
                 )
 
-    # ----------------------------
-    # KOKORO STREAMING
-    # ----------------------------
-    def _speak_kokoro_stream(self, text: str):
+    def _speak_stream(self, text: str):
+
         audio_queue = queue.Queue(maxsize=8)
+
         stop_signal = object()
 
+        chunks = self._split_sentences(text)
+
         def producer():
+
             try:
-                # Kokoro yields (text, phonemes, audio)
-                for _, _, audio in self.kokoro_model(text, voice="af_heart"):
+                for chunk in chunks:
+
                     if self._stop_event.is_set():
                         break
-                    audio_queue.put(np.array(audio, dtype=np.float32))
+
+                    wav = self.model.generate(
+                        chunk,
+                        audio_prompt_path=self.voice_path,
+                    )
+
+                    audio = (
+                        wav.squeeze()
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
+
+                    audio_queue.put(audio)
+
             except Exception as e:
-                _console.print(f"[red]Producer error: {e}[/red]")
+                _console.print(
+                    f"Producer error: {e}"
+                )
+
             finally:
                 audio_queue.put(stop_signal)
 
-        def consumer(sample_rate=22050):
+        def consumer():
+
             stream = sd.OutputStream(
-                samplerate=sample_rate,
+                samplerate=self.model.sr,
                 channels=1,
                 dtype="float32",
-                blocksize=1024,
+                blocksize=2048,
             )
+
             stream.start()
 
             try:
+
                 while not self._stop_event.is_set():
+
                     try:
                         chunk = audio_queue.get(timeout=1)
+
                     except queue.Empty:
                         continue
 
@@ -113,12 +147,20 @@ class TTSService:
                         break
 
                     stream.write(chunk)
+
             finally:
                 stream.stop()
                 stream.close()
 
-        t1 = threading.Thread(target=producer, daemon=True)
-        t2 = threading.Thread(target=consumer, daemon=True)
+        t1 = threading.Thread(
+            target=producer,
+            daemon=True
+        )
+
+        t2 = threading.Thread(
+            target=consumer,
+            daemon=True
+        )
 
         t1.start()
         t2.start()
@@ -126,33 +168,18 @@ class TTSService:
         t1.join()
         t2.join()
 
-    # ----------------------------
-    # FALLBACKS
-    # ----------------------------
-    def _speak_macos(self, text: str) -> None:
-        fd, aiff_path = tempfile.mkstemp(suffix=".aiff", prefix="ifa_tts_")
-        os.close(fd)
-        try:
-            subprocess.run(["say", "-o", aiff_path, "--", text], check=False)
-            subprocess.run(["afplay", aiff_path], check=False)
-        finally:
-            try:
-                os.unlink(aiff_path)
-            except OSError:
-                pass
+    def _split_sentences(self, text: str):
 
-    def _speak_windows(self, text: str) -> None:
-        script = (
-            "Add-Type -AssemblyName System.Speech; "
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            '$s.Speak([System.Environment]::GetEnvironmentVariable("IFA_TTS_TEXT"))'
-        )
+        text = text.strip()
 
-        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-        env = {**os.environ, "IFA_TTS_TEXT": text}
+        if not text:
+            return []
 
-        subprocess.run(
-            ["powershell", "-NoProfile", "-EncodedCommand", encoded],
-            env=env,
-            check=False,
-        )
+        return [
+            s.strip()
+            for s in re.split(
+                r"(?<=[.!?])\s+",
+                text
+            )
+            if s.strip()
+        ]

@@ -73,7 +73,7 @@ def main() -> int:
     except Exception as exc:
         _step(f"ERROR: {exc}")
         return 1
-    _step("all voice models cached. runtime can now use HF_HUB_OFFLINE=1.")
+    _step("all voice models cached. runtime can now use HF_HUB_OFFLINE=0.")
     return 0
 
 

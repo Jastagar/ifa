@@ -93,6 +93,6 @@ REM -------- 6. Launch Ifa --------
 echo.
 echo [launch] Starting Ifa. Type 'exit' to quit.
 echo.
-set "HF_HUB_OFFLINE=1"
+set "HF_HUB_OFFLINE=0"
 "venv\Scripts\python.exe" -m ifa.main
 exit /b %errorlevel%

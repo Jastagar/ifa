@@ -152,7 +152,7 @@ class AgentSystemPromptWithFactsTests(unittest.TestCase):
 
     def test_facts_appear_in_system_prompt(self):
         from unittest.mock import patch
-        from ifa.core import agent
+        from ifa.core import agent_stream
         from ifa.core.memory import Memory
         from ifa.tools import registry
 
@@ -160,7 +160,7 @@ class AgentSystemPromptWithFactsTests(unittest.TestCase):
         ctx = AgentContext(tts=MagicMock(), db_path=self.db_path, n8n_config={})
 
         with patch("ifa.core.agent.chat", return_value={"message": {"content": "ok"}}) as mock_chat:
-            agent.agent_turn("hi", ctx, Memory())
+            agent_stream.agent_turn("hi", ctx, Memory())
 
         system_msg = mock_chat.call_args.kwargs["messages"][0]
         self.assertEqual(system_msg["role"], "system")

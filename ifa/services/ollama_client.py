@@ -6,6 +6,7 @@ Ollama's spec (not `name`). The helper `build_tool_result_message` isolates
 that spec quirk so callers don't drift from it.
 """
 import httpx
+import json
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_TIMEOUT = 60.0
@@ -19,6 +20,44 @@ def build_tool_result_message(tool_name: str, content: str) -> dict:
     """
     return {"role": "tool", "tool_name": tool_name, "content": content}
 
+def stream_chat(
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+):
+    """
+    Stream chat chunks from Ollama's /api/chat endpoint.
+
+    Yields parsed JSON chunks incrementally.
+
+    Each yielded object is one streamed response fragment.
+    """
+
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+
+    if tools is not None:
+        payload["tools"] = tools
+
+    with httpx.stream(
+        "POST",
+        f"{OLLAMA_BASE_URL}/api/chat",
+        json=payload,
+        timeout=timeout,
+    ) as response:
+
+        response.raise_for_status()
+
+        for line in response.iter_lines():
+
+            if not line:
+                continue
+
+            yield json.loads(line)
 
 def chat(model: str, messages: list[dict], tools: list[dict] | None = None,
          timeout: float = DEFAULT_TIMEOUT) -> dict:

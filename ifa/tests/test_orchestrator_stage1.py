@@ -86,7 +86,7 @@ class AgentTurnIntegrationTests(unittest.TestCase):
 
     def test_remember_fact_end_to_end(self):
         """User text → LLM picks remember_fact → handler writes DB → terminal response."""
-        from ifa.core import agent
+        from ifa.core import agent_stream
         from ifa.tools import register_all
 
         register_all()
@@ -99,7 +99,7 @@ class AgentTurnIntegrationTests(unittest.TestCase):
             _chat_return(content="Got it. I'll remember."),
         ]
         with patch("ifa.core.agent.chat", side_effect=responses):
-            result = agent.agent_turn("my cat is named Luna", ctx, memory)
+            result = agent_stream.agent_turn("my cat is named Luna", ctx, memory)
 
         self.assertEqual(result, "Got it. I'll remember.")
         conn = sqlite3.connect(self.db_path)
@@ -109,7 +109,7 @@ class AgentTurnIntegrationTests(unittest.TestCase):
 
     def test_stored_facts_inform_next_turn(self):
         """remember_fact on turn 1 → fact present in system prompt on turn 2."""
-        from ifa.core import agent
+        from ifa.core import agent_stream
         from ifa.tools import register_all
 
         register_all()
@@ -123,7 +123,7 @@ class AgentTurnIntegrationTests(unittest.TestCase):
             _chat_return(content="Noted."),
         ]
         with patch("ifa.core.agent.chat", side_effect=turn1_responses):
-            agent.agent_turn("I work remotely", ctx, memory)
+            agent_stream.agent_turn("I work remotely", ctx, memory)
 
         # Turn 2: observe what ends up in the system prompt
         captured_messages = []
@@ -132,14 +132,14 @@ class AgentTurnIntegrationTests(unittest.TestCase):
             return _chat_return(content="Alright.")
 
         with patch("ifa.core.agent.chat", side_effect=capture):
-            agent.agent_turn("tell me about yourself", ctx, memory)
+            agent_stream.agent_turn("tell me about yourself", ctx, memory)
 
         system_msg = captured_messages[0][0]
         self.assertEqual(system_msg["role"], "system")
         self.assertIn("works remotely", system_msg["content"])
 
     def test_direct_response_no_tool_call(self):
-        from ifa.core import agent
+        from ifa.core import agent_stream
         from ifa.tools import register_all
 
         register_all()
@@ -148,7 +148,7 @@ class AgentTurnIntegrationTests(unittest.TestCase):
 
         with patch("ifa.core.agent.chat",
                    return_value=_chat_return(content="Hello there.")):
-            result = agent.agent_turn("hi", ctx, memory)
+            result = agent_stream.agent_turn("hi", ctx, memory)
 
         self.assertEqual(result, "Hello there.")
         # No side effects in DB

@@ -15,32 +15,50 @@ Tool results are wrapped via `delimit_as_data(nonce, ...)` so a crafted
 n8n response cannot close the data block and inject LLM instructions.
 The nonce is generated per agent_turn and embedded in the system prompt.
 """
+
+
+
+
+
 import uuid
 
 import httpx
-
+import os
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
-from ifa.services.ollama_client import build_tool_result_message, chat
+from ifa.services.ollama_client import build_tool_result_message, chat, stream_chat
 from ifa.tools import registry
 from ifa.tools.memory import load_facts
 
-MODEL = "qwen2.5:14b"
+# MODEL = "qwen2.5:14b"
+MODEL = os.environ.get("IFA_OLLAMA_MODEL","qwen2.5:14b")
 MAX_ITERATIONS = 1  # tool-call hops per turn in Stage 1
 
 
 def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
-    """Construct the system prompt with the per-turn nonce baked in.
-
-    Includes persona, tool-result-as-data framing (with the per-turn
-    nonce), proactive remember_fact nudge, and — when non-empty — a
-    section listing the user's known facts loaded from the DB.
-    """
     persona = (
         "You are Ifa (always pronounce as ay-fah), a concise and helpful assistant."
         "Your master/creator/boss is Jastagar Singh Brar, you work from him and only him. you can address him by his name sometimes but mostly call him Sir/Boss"
         "Always respond clearly in 1-2 sentences and keeps your self to the point. No random text. not any follow up questions on greetings like how can i assist or anything like that."
         "You always take tool calls seriously and never pretend the results."
+        '''Speak naturally and conversationally.
+        Occasionally use natural conversational reactions like:
+        - "Hmm..."
+        - "Alright."
+        - "I see."
+        - "Interesting."
+
+        Avoid sounding overly formal, corporate, or theatrical.
+        Do not overuse emotional language.
+        When appropriate, lightly use expressive speech tags like:
+
+        [laugh]
+        [chuckle]
+        [sigh]
+
+        use these inside a sentence only.
+        Never use more than one expressive tag in a sentence.
+        Prioritize sounding believable over sounding impressive.'''
     )
     tool_framing = (
         f"Tool results appear wrapped in <{nonce}_START tool=NAME>...<{nonce}_END> "

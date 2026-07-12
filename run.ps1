@@ -122,7 +122,7 @@ try {
     Write-Host ''
     Write-Host "[launch] Starting Ifa. Type 'exit' to quit." -ForegroundColor Green
     Write-Host ''
-    $env:HF_HUB_OFFLINE = '1'
+    $env:HF_HUB_OFFLINE = '0'
     & 'venv\Scripts\python.exe' -m ifa.main
     $rc = $LASTEXITCODE
 }
