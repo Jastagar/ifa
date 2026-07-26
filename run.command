@@ -3,7 +3,7 @@
 # (macOS opens .command files in Terminal.app directly.)
 #
 # Self-heals: creates venv if missing, installs requirements, starts Ollama,
-# pulls llama3.1 if not present, then runs python -m ifa.main.
+# pulls the model configured in .env if not present, then runs python -m ifa.main.
 
 set -u
 
@@ -62,10 +62,15 @@ if ! curl -s -m 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
     fi
 fi
 
-# -------- 4. llama3.1 pulled? --------
-if ! ollama list 2>/dev/null | grep -qi "llama3.1"; then
-    echo "[setup] llama3.1 not found. Pulling now (one-time, ~5GB)..."
-    ollama pull llama3.1 || die "ollama pull failed."
+# -------- 4. Configured Ollama model pulled? --------
+OLLAMA_MODEL="$(grep -E '^[[:space:]]*IFA_OLLAMA_MODEL[[:space:]]*=' .env | head -n 1 | sed -E 's/^[^=]*=[[:space:]]*//')"
+if [[ -z "$OLLAMA_MODEL" ]]; then
+    die "IFA_OLLAMA_MODEL is not set in .env."
+fi
+export IFA_OLLAMA_MODEL="$OLLAMA_MODEL"
+if ! ollama list 2>/dev/null | grep -Fqi "$OLLAMA_MODEL"; then
+    echo "[setup] $OLLAMA_MODEL not found. Pulling now (one-time)..."
+    ollama pull "$OLLAMA_MODEL" || die "ollama pull failed."
 fi
 
 # -------- 5. Voice-mode models pre-cached --------

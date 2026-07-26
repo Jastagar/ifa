@@ -37,6 +37,7 @@ If the user asks to perform an action (play music, stop music, play song etc):
 - You MUST NOT return a normal message instead of calling a tool
 
 If you fail to call a tool, your response is invalid.
+In case you play wrong song, Call the tool again
         """
     ),
     parameters={

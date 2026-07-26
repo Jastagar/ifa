@@ -15,6 +15,7 @@ Startup order is load-bearing:
   7. Enter main loop
 """
 import pathlib
+import os
 import sqlite3
 import sys
 import threading
@@ -29,10 +30,33 @@ from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
 from ifa.services.ollama_client import check_health
 from ifa.services.tts_service import TTSService
+from ifa.services.activation_server import ActivationService, start_activation_server
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import init_input
+from ifa.core.personality import persona, tool_framing, remember_nudge
 from ifa.utils.speech_queue import SpeechQueue
+from pathlib import Path
+import uuid
+
+# MEMORY_FILE = Path("./memory.md")
+# def load_memories() -> str:
+#     if not MEMORY_FILE.exists():
+#         return ""
+
+#     return MEMORY_FILE.read_text(encoding="utf-8").strip()
+
+# def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
+#     parts = [persona, tool_framing(nonce), remember_nudge]
+#     memory = load_memories()
+#     if memory:
+#         parts.append(
+#             "Long-term memory:\n"
+#             "The following information has been intentionally remembered from previous conversations.\n"
+#             "Treat it as persistent context.\n\n"
+#             f"{memory}"
+#         )
+#     return "\n\n".join(parts)
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
 
@@ -70,6 +94,13 @@ def run() -> None:
     print("Orchestrator running...")
 
     # 1. Ollama health check (fail fast)
+    if not MODEL:
+        print(
+            "\n❌ IFA_OLLAMA_MODEL is not set. Add it to .env, for example: "
+            "IFA_OLLAMA_MODEL=your-model-name\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     try:
         check_health(required_model=MODEL)
     except RuntimeError as exc:
@@ -92,7 +123,7 @@ def run() -> None:
     init_db()
     tts = TTSService()
     speech_queue = SpeechQueue(
-        handler=tts.speak
+        handler=tts.enqueue
     )
     ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
     register_all()
@@ -105,6 +136,14 @@ def run() -> None:
 
     # 8. Main loop
     memory = Memory()
+    # memory.add(role="system",content=_build_system_prompt(nonce=f"TOOL_RESULT_{uuid.uuid4().hex[:12]}" ))
+    def on_sentence(sentence: str):
+        print(f"Ifa: {sentence}")
+        speech_queue.enqueue(sentence)
+
+    if os.environ.get("IFA_API_ENABLED", "1").lower() not in {"0", "false", "no", "off"}:
+        start_activation_server(ActivationService(ctx, memory, on_sentence), input_mode)
+
     while True:
         user_input = input_mode.get().strip()
         if not user_input:
@@ -115,10 +154,6 @@ def run() -> None:
         print(f"You: {user_input}")
         if user_input.lower() in ["exit", "quit"]:
             break
-
-        def on_sentence(sentence: str):
-            print(f"Ifa: {sentence}")
-            speech_queue.enqueue(sentence)
 
         reply = agent_turn_stream(
             user_text=user_input,

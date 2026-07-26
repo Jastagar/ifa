@@ -12,15 +12,11 @@ class Home(Skill):
         self.currentVibe:Vibes = default_vibe
 
     def change_vibe(self, to_vibe: Vibes) -> str:
-        print("TURNING ON")
-        print(to_vibe)
         if to_vibe == "GAMING":
             self.tts.speak("Sure, lets do it!")
             self.currentVibe = "GAMING"
             sd.play(data, sr)
-            print("SWITCHING TO GAMING MODE")
             return 'Sure, lets do it!'
         self.currentVibe = "NORMAL"
         self.tts.speak("Switching back...")
-        print("SWITCHING BACK TO NORMAL")
         return 'Switching back...'

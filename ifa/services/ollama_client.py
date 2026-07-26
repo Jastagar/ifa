@@ -7,6 +7,10 @@ that spec quirk so callers don't drift from it.
 """
 import httpx
 import json
+import base64
+import io
+from PIL import Image
+from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_THINK
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_TIMEOUT = 60.0
@@ -24,6 +28,7 @@ def stream_chat(
     model: str,
     messages: list[dict],
     tools: list[dict] | None = None,
+    think: bool = OLLAMA_THINK,
     timeout: float = DEFAULT_TIMEOUT,
 ):
     """
@@ -37,7 +42,9 @@ def stream_chat(
     payload: dict = {
         "model": model,
         "messages": messages,
-        "stream": True,
+        "stream": False,
+        "think": think,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
     }
 
     if tools is not None:
@@ -59,18 +66,50 @@ def stream_chat(
 
             yield json.loads(line)
 
-def chat(model: str, messages: list[dict], tools: list[dict] | None = None,
-         timeout: float = DEFAULT_TIMEOUT) -> dict:
-    """POST to /api/chat and return the parsed response dict.
-
-    Raises httpx.HTTPError on network/timeout/status failures. Raises
-    KeyError if the response shape is unexpected — caller handles both.
+def chat(
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    think: bool = OLLAMA_THINK,
+    images: list[Image.Image] | None = None,
+) -> dict:
     """
+    POST to /api/chat and return the parsed response.
+
+    If `images` is supplied, they are attached to the last user message.
+    """
+
+    # Don't mutate the caller's messages
+    messages = [message.copy() for message in messages]
+
+    if images:
+        encoded_images: list[str] = []
+
+        for image in images:
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+
+            encoded_images.append(
+                base64.b64encode(buffer.getvalue()).decode("utf-8")
+            )
+
+        # Attach images to the last user message
+        for message in reversed(messages):
+            if message["role"] == "user":
+                message["images"] = encoded_images
+                break
+        else:
+            raise ValueError("No user message found to attach images to.")
+
     payload: dict = {
         "model": model,
         "messages": messages,
         "stream": False,
+        "think": think,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
     }
+
     if tools is not None:
         payload["tools"] = tools
 
@@ -79,9 +118,10 @@ def chat(model: str, messages: list[dict], tools: list[dict] | None = None,
         json=payload,
         timeout=timeout,
     )
-    response.raise_for_status()
-    return response.json()
 
+    response.raise_for_status()
+
+    return response.json()
 
 def check_health(required_model: str) -> None:
     """Verify Ollama is running, the model is pulled, and tool-calling works.

@@ -94,12 +94,14 @@ class VoiceInput(_InputMode):
         import sounddevice as sd
 
         from ifa.voice.capture import CAPTURE_SAMPLES, capture_utterance
+        from ifa.voice.cues import play_listening_cue
         from ifa.voice.stt import transcribe_array
         from ifa.voice.wake_word import WAKE_CHUNK_SAMPLES, WakeWordListener
 
         self._tts = tts_service  # stored so capture can wait on is_speaking
         self._listener = WakeWordListener(tts_service=tts_service)
         self._capture_utterance = capture_utterance
+        self._play_listening_cue = play_listening_cue
         self._transcribe = transcribe_array
         self._wake_chunk_samples = WAKE_CHUNK_SAMPLES
         self._capture_chunk_samples = CAPTURE_SAMPLES
@@ -314,6 +316,11 @@ class VoiceInput(_InputMode):
                 # self-feedback chat loop.
                 if not self._wait_for_tts_silence():
                     return
+                # Acknowledge an actual wake-word detection, but keep the
+                # conversational follow-up window silent. The cue is played
+                # before draining so it cannot be captured as user speech.
+                if not in_followup:
+                    self._play_listening_cue()
                 # Discard whatever the OS buffered during TTS / cooldown.
                 self._drain_stream()
 
@@ -321,6 +328,7 @@ class VoiceInput(_InputMode):
                     read_chunk=self._read_capture_chunk, **capture_kwargs
                 )
                 duration = len(audio) / 16_000
+                
                 if len(audio):
                     import numpy as _np  # local — avoid hot-path import on text mode
                     peak = float(_np.abs(audio).max())
@@ -332,7 +340,21 @@ class VoiceInput(_InputMode):
                     self._maybe_dump_wav(audio)
                 else:
                     print(f"[voice] captured {duration:.2f}s — transcribing...")
-                text = self._transcribe(audio)
+
+                transcribedText = self._transcribe(audio)
+                if self._listener._api_context:
+                    text = f"""
+Based on this mobile notification's data context:
+>>>
+{self._listener._api_context}
+>>>
+reply to the following: 
+{transcribedText}
+"""
+                    self._listener.clear_api_context()
+                else:
+                    text = transcribedText
+
             except BaseException as exc:
                 # BaseException catches test sentinels (which inherit from it)
                 # and propagates SystemExit/KeyboardInterrupt cleanly while
@@ -344,15 +366,15 @@ class VoiceInput(_InputMode):
                 print(f"[voice] loop error: {exc}")
                 continue
 
-            text = (text or "").strip()
-            if not text:
+            transcribedText = (transcribedText or "").strip()
+            if not transcribedText:
                 # VAD fired but Whisper heard nothing intelligible — just go
                 # back to listening; don't confuse the agent with empty input.
                 # No turn was produced, so don't wait for arm_followup —
                 # just iterate and try again immediately.
                 print("[voice] (no speech detected / empty transcript)")
                 continue
-            print(f"[voice] heard: {text!r}")
+            print(f"[voice] heard: {transcribedText!r}")
             self._queue.put(text)
             needs_turn_wait = True
 
@@ -398,6 +420,9 @@ def init_input(tts_service: TTSService) -> _InputMode:
     else:
         wake_display = wake_name
 
+    print(
+        fallback_from
+    )
     print(
         f"[voice] mode=voice  wake={wake_display}  whisper={whisper_name}  "
         f"threshold={threshold:.2f}  followup={followup_sec:g}s"

@@ -1,69 +1,105 @@
-"""`remember_fact` tool — LLM-initiated long-term fact storage.
-
-Replaces the old eager `extract_fact()` per-turn pipeline. The LLM decides
-when to remember by calling this tool. Facts are stored in the existing
-SQLite `facts` table (INSERT OR IGNORE — duplicates are silently dropped).
-
-`load_facts(db_path, limit)` is used by the agent's system prompt to
-inject remembered facts into every turn's context (up to `limit` facts).
-"""
-import sqlite3
+from pathlib import Path
+from datetime import datetime
 
 from ifa.core.context import AgentContext
 from ifa.tools.registry import Tool, register
 
-MAX_FACT_CHARS = 1000
+MEMORY_FILE = Path("memory.md")
+MAX_MEMORY_CHARS = 1000
+
+
+def _ensure_memory_file():
+    if not MEMORY_FILE.exists():
+        MEMORY_FILE.write_text("# Memory\n", encoding="utf-8")
 
 
 def _handler(args: dict, ctx: AgentContext) -> str:
-    fact = args["fact"].strip()
-    if not fact:
-        return "I didn't catch what to remember."
-    if len(fact) > MAX_FACT_CHARS:
-        fact = fact[:MAX_FACT_CHARS]
+    _ensure_memory_file()
 
-    try:
-        conn = sqlite3.connect(ctx.db_path)
-        conn.execute("INSERT OR IGNORE INTO facts (fact) VALUES (?)", (fact,))
-        conn.commit()
-        conn.close()
-    except sqlite3.Error as exc:
-        return f"I couldn't save that right now: {exc}"
+    memory = args["memory"].strip()
+    category = args.get("category", "General").strip()
+
+    if not memory:
+        return "I didn't catch what to remember."
+
+    if len(memory) > MAX_MEMORY_CHARS:
+        memory = memory[:MAX_MEMORY_CHARS]
+
+    content = MEMORY_FILE.read_text(encoding="utf-8")
+
+    # Prevent duplicates
+    if memory.lower() in content.lower():
+        return "I already know that."
+
+    section = f"## {category}"
+
+    if section not in content:
+        content += f"\n\n{section}\n"
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    entry = f"\n- [{timestamp}] {memory}"
+
+    section_start = content.index(section) + len(section)
+    next_section = content.find("\n## ", section_start)
+
+    if next_section == -1:
+        content += entry
+    else:
+        content = (
+            content[:next_section]
+            + entry
+            + content[next_section:]
+        )
+
+    MEMORY_FILE.write_text(content, encoding="utf-8")
 
     return "Got it, I'll remember that."
 
 
-def load_facts(db_path: str, limit: int = 5) -> list[str]:
-    """Read up to `limit` facts from the DB. Returns empty list on any error
-    — the agent loop treats 'no facts' identically to 'DB unavailable'."""
-    try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.execute("SELECT fact FROM facts LIMIT ?", (limit,))
-        rows = [row[0] for row in cur.fetchall()]
-        conn.close()
-        return rows
-    except sqlite3.Error:
-        return []
+def load_memories(limit: int = 50) -> str:
+    """
+    Returns the contents of memory.md.
+    The limit is applied to memory bullet points.
+    """
+
+    _ensure_memory_file()
+
+    lines = MEMORY_FILE.read_text(encoding="utf-8").splitlines()
+
+    result = []
+    count = 0
+
+    for line in lines:
+        result.append(line)
+
+        if line.startswith("- "):
+            count += 1
+            if count >= limit:
+                break
+
+    return "\n".join(result)
 
 
 TOOL = Tool(
-    name="remember_fact",
+    name="remember",
     description=(
-        "Save a durable long-term fact about the user — names, preferences, "
-        "recurring plans, relationships, anything worth recalling across "
-        "conversations. Call this proactively whenever the user shares "
-        "personal information worth retaining."
+        "call this tool when ever user tells you to remember something, note something or check something from the memory."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "fact": {
+            "memory": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The fact to remember, phrased as a standalone statement (e.g., 'user's cat is named Luna').",
+                "description": "The information to remember as a standalone statement.",
+            },
+            "category": {
+                "type": "string",
+                "description": "Optional category such as Personal, Preferences, Projects, Work, Health, Goals.",
+                "default": "General",
             },
         },
-        "required": ["fact"],
+        "required": ["memory"],
         "additionalProperties": False,
     },
     handler=_handler,

@@ -103,11 +103,20 @@ try {
         }
     }
 
-    # -------- 4. llama3.1 pulled? --------
+    # -------- 4. Configured Ollama model pulled? --------
+    $modelLine = Get-Content '.env' | Where-Object {
+        $_ -match '^\s*IFA_OLLAMA_MODEL\s*='
+    } | Select-Object -First 1
+    $ollamaModel = ($modelLine -replace '^\s*IFA_OLLAMA_MODEL\s*=\s*', '').Trim()
+    if (-not $ollamaModel) {
+        Write-Err 'IFA_OLLAMA_MODEL is not set in .env.'
+        Pause-Exit 1
+    }
+    $env:IFA_OLLAMA_MODEL = $ollamaModel
     $modelList = & ollama list 2>$null
-    if (-not ($modelList -match 'qwen2\.5:7b-instruct')) {
-        Write-Step 'llama3.1 not found. Pulling now (one-time, ~5GB)...'
-        ollama pull llama3.1
+    if (-not (($modelList -join "`n").Contains($ollamaModel))) {
+        Write-Step "$ollamaModel not found. Pulling now (one-time)..."
+        ollama pull $ollamaModel
         if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
     }
 

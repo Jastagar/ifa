@@ -1,6 +1,6 @@
 """Manual tool-call acceptance bench — NOT run in CI.
 
-Measures llama3.1's tool-selection accuracy against a fixed
+Measures the configured model's tool-selection accuracy against a fixed
 20-utterance set. Gates Unit 6b (deletion of old code paths) in the plan:
 the bench's per-tool accuracy floors MUST be met before brain.py /
 manager.py / detect_intent / extract_fact are deleted.
@@ -10,7 +10,7 @@ Usage:
 
 Requires:
     - Ollama running locally
-    - `ollama pull llama3.1` (or quantized equivalent)
+    - the model named by ``IFA_OLLAMA_MODEL`` pulled through Ollama
 
 Outputs a machine-readable JSON summary to stdout plus a human-readable
 per-utterance table. The JSON lets downstream scripts gate the deletion

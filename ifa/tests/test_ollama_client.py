@@ -15,7 +15,7 @@ from ifa.services.ollama_client import (
 )
 
 
-MODEL=os.environ.get("IFA_OLLAMA_MODEL","qwen2.5:14b")
+MODEL = os.environ.get("IFA_OLLAMA_MODEL", "test-model")
 
 def _mock_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
     """Fabricate an httpx.Response with json() + raise_for_status()."""
@@ -78,6 +78,18 @@ class ChatTests(unittest.TestCase):
             chat(MODEL, [{"role": "user", "content": "hi"}])
         self.assertFalse(post.call_args.kwargs["json"]["stream"])
 
+    def test_includes_thinking_setting(self):
+        with patch("ifa.services.ollama_client.httpx.post",
+                   return_value=_mock_response(200, {"message": {}})) as post:
+            chat(MODEL, [{"role": "user", "content": "hi"}], think=False)
+        self.assertFalse(post.call_args.kwargs["json"]["think"])
+
+    def test_includes_keep_alive_setting(self):
+        with patch("ifa.services.ollama_client.httpx.post",
+                   return_value=_mock_response(200, {"message": {}})) as post:
+            chat(MODEL, [{"role": "user", "content": "hi"}])
+        self.assertIn("keep_alive", post.call_args.kwargs["json"])
+
     def test_raises_on_http_error(self):
         with patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(500)):
@@ -93,7 +105,7 @@ class CheckHealthTests(unittest.TestCase):
 
     def test_happy_path_passes_silently(self):
         with patch("ifa.services.ollama_client.httpx.get",
-                   return_value=self._mock_tags(["qwen2.5:14b-q4_K_M"])), \
+                   return_value=self._mock_tags([f"{self.MODEL}-q4_K_M"])), \
              patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})):
             check_health(self.MODEL)  # must not raise
@@ -108,10 +120,10 @@ class CheckHealthTests(unittest.TestCase):
 
     def test_model_not_pulled(self):
         with patch("ifa.services.ollama_client.httpx.get",
-                   return_value=self._mock_tags(["llama3.1:8b"])):
+                   return_value=self._mock_tags(["other-model:latest"])):
             with self.assertRaises(RuntimeError) as cm:
                 check_health(self.MODEL)
-        self.assertIn("ollama pull qwen2.5:14b", str(cm.exception))
+        self.assertIn(f"ollama pull {self.MODEL}", str(cm.exception))
 
     def test_tool_calling_not_supported(self):
         """Ollama responds to /api/tags but rejects /api/chat with tools."""
@@ -131,7 +143,7 @@ class CheckHealthTests(unittest.TestCase):
     def test_model_prefix_match(self):
         """check_health accepts any tag starting with the required prefix."""
         with patch("ifa.services.ollama_client.httpx.get",
-                   return_value=self._mock_tags(["qwen2.5:14b-q8_0"])), \
+                   return_value=self._mock_tags([f"{self.MODEL}-q8_0"])), \
              patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})):
             check_health(self.MODEL)  # must not raise

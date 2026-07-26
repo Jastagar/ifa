@@ -20,13 +20,11 @@ class SpotifySkill(Skill):
         results = self.sp.search(q=query, limit=5, type="track")
 
         print("PLAYING IN SPOTIFY")
-        print(results)
 
         if not results["tracks"]["items"]:
             return "Couldn't find that song"
 
         track = results["tracks"]["items"][0]
-        print(track)
         uri = track["uri"]
 
         devices = self.sp.devices()
@@ -36,7 +34,6 @@ class SpotifySkill(Skill):
         device_id = devices["devices"][0]["id"]
 
         self.sp.start_playback(device_id=device_id, uris=[uri])
-        print(device_id)
         return f"Playing {track['name']}"
 
     def pause(self):

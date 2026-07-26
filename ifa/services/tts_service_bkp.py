@@ -1,158 +1,220 @@
-import base64
 import os
-import subprocess
-import sys
-import tempfile
+import re
 import threading
-import time
-import numpy as np
 import queue
-from kokoro import KPipeline
+import time
+
+import numpy as np
 import sounddevice as sd
+import torch
+
+from chatterbox.tts_turbo import ChatterboxTurboTTS
+# from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from rich.console import Console
+from blingfire import text_to_sentences
+
+from parler_tts import ParlerTTSForConditionalGeneration
+from transformers import AutoTokenizer
 
 _console = Console()
 
-
 class TTSService:
-    def __init__(self) -> None:
+    def __init__(self):
+
         self._lock = threading.Lock()
         self._active_count = 0
         self._mute_until = 0.0
-        self._cooldown_sec = float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
 
-        # 🔥 Kokoro model (initialize once)
-        self.kokoro_model = KPipeline(lang_code="a")
+        self._cooldown_sec = (
+            float(os.environ.get("IFA_TTS_COOLDOWN_MS", "500")) / 1000.0
+        )
 
-        # 🔥 interrupt support
         self._stop_event = threading.Event()
 
-    # ----------------------------
-    # STATE
-    # ----------------------------
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+        if self.device == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+        
+        _console.print("PROCESSOR TYPE :",torch.cuda.is_available())
+
+        _console.print(
+            f"Loading Chatterbox Turbo on {self.device}"
+        )
+
+        _console.print(
+            f"Loading Indic Parler TTS on {self.device}"
+        )
+
+        self.model = ParlerTTSForConditionalGeneration.from_pretrained(
+            "ai4bharat/indic-parler-tts"
+        ).to(self.device)
+        self.model.eval()
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            "ai4bharat/indic-parler-tts"
+        )
+
+        self.description_tokenizer = AutoTokenizer.from_pretrained(
+            self.model.config.text_encoder._name_or_path
+        )
+
+        self.sample_rate = self.model.config.sampling_rate
+        # self.model = ChatterboxMultilingualTTS.from_pretrained(
+        #     device=self.device
+        # )
+
+        self.voice_description = "Divya's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise. She speaks Hinglish"
+        desc = self.description_tokenizer(
+            self.voice_description,
+            return_tensors="pt"
+        )
+
+        self.description_inputs = {
+            k: v.to(self.device)
+            for k, v in desc.items()
+        }
+
+        # Text generation and audio playback run independently. This lets the
+        # GPU prepare the next sentence/phrase while the speaker is playing
+        # the previous one.
+        self._text_queue = queue.Queue()
+        # Buffer enough generated audio to stay ahead of playback for longer
+        # answers without unbounded memory growth.
+        self._audio_queue = queue.Queue(maxsize=64)
+        self._producer = threading.Thread(target=self._produce_audio, daemon=True)
+        self._consumer = threading.Thread(target=self._play_audio, daemon=True)
+        self._producer.start()
+        self._consumer.start()
+
     @property
-    def is_speaking(self) -> bool:
+    def is_speaking(self):
+
         with self._lock:
-            return self._active_count > 0 or time.monotonic() < self._mute_until
+            return (
+                self._active_count > 0
+                or time.monotonic() < self._mute_until
+            )
 
     def stop(self):
-        """Interrupt ongoing speech"""
         self._stop_event.set()
 
-    # ----------------------------
-    # MAIN ENTRY
-    # ----------------------------
-    def speak(self, text: str) -> None:
+    def enqueue(self, text: str) -> threading.Event | None:
+        """Queue speech without waiting for earlier audio to finish."""
         if not text:
-            return
+            return None
 
         with self._lock:
             self._active_count += 1
 
         self._stop_event.clear()
+        completed = threading.Event()
+        self._text_queue.put((text.strip(), completed))
+        return completed
 
-        try:
-            # ✅ Try Kokoro first
+    def speak(self, text: str):
+        """Queue speech and wait for its audio to finish (legacy API)."""
+        completed = self.enqueue(text)
+        if completed:
+            completed.wait()
+
+    def _produce_audio(self) -> None:
+        while True:
+            text, completed = self._text_queue.get()
+
             try:
-                self._speak_kokoro_stream(text)
-                return
-            except Exception as e:
-                _console.print(f"[yellow]Kokoro failed, falling back: {e}[/yellow]")
+                for sentence in self._split_sentences(text):
 
-            # ✅ Fallback
-            if sys.platform == "darwin":
-                self._speak_macos(text)
-            elif sys.platform == "win32":
-                self._speak_windows(text)
-            else:
-                subprocess.run(["espeak", "--", text], check=False)
-
-        finally:
-            with self._lock:
-                self._active_count -= 1
-                self._mute_until = max(
-                    self._mute_until, time.monotonic() + self._cooldown_sec
-                )
-
-    # ----------------------------
-    # KOKORO STREAMING
-    # ----------------------------
-    def _speak_kokoro_stream(self, text: str):
-        audio_queue = queue.Queue(maxsize=8)
-        stop_signal = object()
-
-        def producer():
-            try:
-                # Kokoro yields (text, phonemes, audio)
-                for _, _, audio in self.kokoro_model(text, voice="af_heart"):
                     if self._stop_event.is_set():
                         break
-                    audio_queue.put(np.array(audio, dtype=np.float32))
-            except Exception as e:
-                _console.print(f"[red]Producer error: {e}[/red]")
-            finally:
-                audio_queue.put(stop_signal)
 
-        def consumer(sample_rate=22050):
-            stream = sd.OutputStream(
-                samplerate=sample_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=1024,
-            )
-            stream.start()
+                    prompt_inputs = self.tokenizer(
+                        sentence,
+                        return_tensors="pt",
+                    )
 
-            try:
-                while not self._stop_event.is_set():
-                    try:
-                        chunk = audio_queue.get(timeout=1)
-                    except queue.Empty:
-                        continue
+                    prompt_inputs = {
+                        k: v.to(self.device, non_blocking=True)
+                        for k, v in prompt_inputs.items()
+                    }
 
-                    if chunk is stop_signal:
+                    with torch.inference_mode():
+
+                        generation = self.model.generate(
+                            input_ids=self.description_inputs["input_ids"],
+                            attention_mask=self.description_inputs["attention_mask"],
+                            prompt_input_ids=prompt_inputs["input_ids"],
+                            prompt_attention_mask=prompt_inputs["attention_mask"],
+                        )
+
+                    if isinstance(generation, tuple):
+                        generation = generation[0]
+
+                    if isinstance(generation, dict):
+                        generation = generation["audio"]
+
+                    audio = (
+                        generation
+                        .detach()
+                        .float()
+                        .cpu()
+                        .squeeze()
+                        .numpy()
+                        .astype(np.float32)
+                    )
+
+                    if self._stop_event.is_set():
                         break
 
-                    stream.write(chunk)
+                    self._audio_queue.put((audio, None))
+
+            except Exception as exc:
+                _console.print(f"[red]Producer error:[/red] {exc}")
+
             finally:
-                stream.stop()
-                stream.close()
+                self._audio_queue.put((None, completed))
+                self._text_queue.task_done()
 
-        t1 = threading.Thread(target=producer, daemon=True)
-        t2 = threading.Thread(target=consumer, daemon=True)
+    def _play_audio(self) -> None:
+        stream = None
 
-        t1.start()
-        t2.start()
+        while True:
+            audio, completed = self._audio_queue.get()
 
-        t1.join()
-        t2.join()
-
-    # ----------------------------
-    # FALLBACKS
-    # ----------------------------
-    def _speak_macos(self, text: str) -> None:
-        fd, aiff_path = tempfile.mkstemp(suffix=".aiff", prefix="ifa_tts_")
-        os.close(fd)
-        try:
-            subprocess.run(["say", "-o", aiff_path, "--", text], check=False)
-            subprocess.run(["afplay", aiff_path], check=False)
-        finally:
             try:
-                os.unlink(aiff_path)
-            except OSError:
-                pass
+                if audio is not None:
 
-    def _speak_windows(self, text: str) -> None:
-        script = (
-            "Add-Type -AssemblyName System.Speech; "
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            '$s.Speak([System.Environment]::GetEnvironmentVariable("IFA_TTS_TEXT"))'
-        )
+                    if stream is None:
+                        stream = sd.OutputStream(
+                            samplerate=self.sample_rate,
+                            channels=1,
+                            dtype="float32",
+                            blocksize=4096,
+                        )
+                        stream.start()
 
-        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-        env = {**os.environ, "IFA_TTS_TEXT": text}
+                    stream.write(audio)
 
-        subprocess.run(
-            ["powershell", "-NoProfile", "-EncodedCommand", encoded],
-            env=env,
-            check=False,
-        )
+                elif completed is not None:
+
+                    with self._lock:
+                        self._active_count -= 1
+                        self._mute_until = max(
+                            self._mute_until,
+                            time.monotonic() + self._cooldown_sec,
+                        )
+
+                    completed.set()
+
+            finally:
+                self._audio_queue.task_done()
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        return [s for s in text_to_sentences(text) if s]
+

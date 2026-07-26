@@ -495,6 +495,50 @@ class VoiceInputFollowupTests(unittest.TestCase):
         finally:
             vi.close()
 
+    def test_listening_cue_plays_before_capture(self):
+        """The acknowledgement cue must finish before microphone capture."""
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+        order: list[str] = []
+
+        def fake_cue():
+            order.append("cue")
+
+        def fake_capture(read_chunk, **kwargs):
+            order.append("capture")
+            raise _LoopStop()
+
+        vi._play_listening_cue = fake_cue
+        vi._listener.wait_for_wake = lambda read_chunk: None
+        vi._capture_utterance = fake_capture
+        vi.start()
+        vi._thread.join(timeout=2.0)
+        try:
+            self.assertEqual(order, ["cue", "capture"])
+        finally:
+            vi.close()
+
+    def test_followup_capture_is_silent(self):
+        """The cue acknowledges a wake word, not every conversational turn."""
+        from ifa.voice.input import VoiceInput
+
+        vi = VoiceInput(tts_service=_FakeTTS())
+        cues: list[str] = []
+        vi._in_followup_window = lambda: True
+        vi._play_listening_cue = lambda: cues.append("cue")
+
+        def fake_capture(read_chunk, **kwargs):
+            raise _LoopStop()
+
+        vi._capture_utterance = fake_capture
+        vi.start()
+        vi._thread.join(timeout=2.0)
+        try:
+            self.assertEqual(cues, [])
+        finally:
+            vi.close()
+
 
 if __name__ == "__main__":
     unittest.main()

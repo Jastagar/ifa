@@ -1,3 +1,4 @@
+
 import os
 import re
 import threading
@@ -9,6 +10,8 @@ import sounddevice as sd
 import torch
 
 from chatterbox.tts_turbo import ChatterboxTurboTTS
+# from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+from blingfire import text_to_sentences
 from rich.console import Console
 
 _console = Console()
@@ -42,11 +45,26 @@ class TTSService:
         self.model = ChatterboxTurboTTS.from_pretrained(
             device=self.device
         )
+        # self.model = ChatterboxMultilingualTTS.from_pretrained(
+        #     device=self.device
+        # )
 
         self.voice_path = os.environ.get(
             "IFA_VOICE_SAMPLE",
             "ifa/audios/voice.wav"
         )
+
+        # Text generation and audio playback run independently. This lets the
+        # GPU prepare the next sentence/phrase while the speaker is playing
+        # the previous one.
+        self._text_queue = queue.Queue()
+        # Buffer enough generated audio to stay ahead of playback for longer
+        # answers without unbounded memory growth.
+        self._audio_queue = queue.Queue(maxsize=64)
+        self._producer = threading.Thread(target=self._produce_audio, daemon=True)
+        self._consumer = threading.Thread(target=self._play_audio, daemon=True)
+        self._producer.start()
+        self._consumer.start()
 
     @property
     def is_speaking(self):
@@ -60,126 +78,73 @@ class TTSService:
     def stop(self):
         self._stop_event.set()
 
-    def speak(self, text: str):
-
+    def enqueue(self, text: str) -> threading.Event | None:
+        """Queue speech without waiting for earlier audio to finish."""
         if not text:
-            return
+            return None
 
         with self._lock:
             self._active_count += 1
 
         self._stop_event.clear()
+        completed = threading.Event()
+        self._text_queue.put((text.strip(), completed))
+        return completed
 
-        try:
-            self._speak_stream(text)
+    def speak(self, text: str):
+        """Queue speech and wait for its audio to finish (legacy API)."""
+        completed = self.enqueue(text)
+        if completed:
+            completed.wait()
 
-        finally:
-
-            with self._lock:
-                self._active_count -= 1
-
-                self._mute_until = max(
-                    self._mute_until,
-                    time.monotonic() + self._cooldown_sec,
-                )
-
-    def _speak_stream(self, text: str):
-
-        audio_queue = queue.Queue(maxsize=8)
-
-        stop_signal = object()
-
-        chunks = self._split_sentences(text)
-
-        def producer():
-
+    def _produce_audio(self) -> None:
+        while True:
+            text, completed = self._text_queue.get()
             try:
-                for chunk in chunks:
-
+                for sentence in self._split_sentences(text):
                     if self._stop_event.is_set():
                         break
-
                     wav = self.model.generate(
-                        chunk,
-                        audio_prompt_path=self.voice_path,
+                        sentence,
+                        audio_prompt_path=self.voice_path
                     )
-
-                    audio = (
-                        wav.squeeze()
-                        .detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.float32)
-                    )
-
-                    audio_queue.put(audio)
-
-            except Exception as e:
-                _console.print(
-                    f"Producer error: {e}"
-                )
-
+                    audio = wav.squeeze().detach().cpu().numpy().astype(np.float32)
+                    self._audio_queue.put((audio, None))
+            except Exception as exc:
+                _console.print(f"Producer error: {exc}")
             finally:
-                audio_queue.put(stop_signal)
+                # This marker sits behind this job's final audio, so playback
+                # completes before synchronous callers are released.
+                self._audio_queue.put((None, completed))
+                self._text_queue.task_done()
 
-        def consumer():
-
-            stream = sd.OutputStream(
-                samplerate=self.model.sr,
-                channels=1,
-                dtype="float32",
-                blocksize=2048,
-            )
-
-            stream.start()
-
+    def _play_audio(self) -> None:
+        stream = None
+        while True:
+            audio, completed = self._audio_queue.get()
             try:
-
-                while not self._stop_event.is_set():
-
-                    try:
-                        chunk = audio_queue.get(timeout=1)
-
-                    except queue.Empty:
-                        continue
-
-                    if chunk is stop_signal:
-                        break
-
-                    stream.write(chunk)
-
+                if audio is not None:
+                    if stream is None:
+                        stream = sd.OutputStream(
+                            samplerate=self.model.sr,
+                            channels=1,
+                            dtype="float32",
+                            blocksize=2048,
+                        )
+                        stream.start()
+                    stream.write(audio)
+                elif completed is not None:
+                    with self._lock:
+                        self._active_count -= 1
+                        self._mute_until = max(
+                            self._mute_until,
+                            time.monotonic() + self._cooldown_sec,
+                        )
+                    completed.set()
             finally:
-                stream.stop()
-                stream.close()
+                self._audio_queue.task_done()
 
-        t1 = threading.Thread(
-            target=producer,
-            daemon=True
-        )
-
-        t2 = threading.Thread(
-            target=consumer,
-            daemon=True
-        )
-
-        t1.start()
-        t2.start()
-
-        t1.join()
-        t2.join()
-
-    def _split_sentences(self, text: str):
-
-        text = text.strip()
-
-        if not text:
-            return []
-
-        return [
-            s.strip()
-            for s in re.split(
-                r"(?<=[.!?])\s+",
-                text
-            )
-            if s.strip()
-        ]
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        lines = [s for s in text_to_sentences(text).splitlines() if s]
+        return lines 
