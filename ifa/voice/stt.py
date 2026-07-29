@@ -1,20 +1,18 @@
-"""Speech-to-text via faster-whisper.
+"""Speech-to-text via Whisper-Hindi2Hinglish-Swift.
 
 Primary entry point for Stage 2 voice mode is ``transcribe_array`` —
 Unit 3's capture step produces a float32 numpy array at 16 kHz, and
 this module runs it through Whisper and returns the transcribed text.
 
 Model is loaded lazily the first time a transcribe function is called,
-then reused across turns. Configurable via ``IFA_WHISPER_MODEL`` env
-var; defaults to ``small.en`` (good-quality English, ~470MB, fits
-comfortably on an M4 Pro or an RTX 4060Ti).
+then reused across turns.
 
-``compute_type='int8'`` keeps memory + latency manageable on CPU while
-matching ``small.en``'s accuracy tolerance.
+Uses:
+    Oriserve/Whisper-Hindi2Hinglish-Swift
 
-``transcribe(audio_path)`` is kept for backwards compatibility with
-``ifa.voice.input`` until Unit 5 replaces that file-mode shim.
+Optimized for Hindi + Hinglish conversational speech.
 """
+
 from __future__ import annotations
 
 import os
@@ -22,105 +20,153 @@ from typing import Optional
 
 import numpy as np
 
-_model: Optional[object] = None  # faster_whisper.WhisperModel, loaded lazily
+
+_model: Optional[object] = None
+_processor: Optional[object] = None
 
 
-def _get_model() -> object:
-    """Load (or return) the singleton WhisperModel.
+def _get_model():
+    """Load Whisper model lazily."""
 
-    Device selection (``IFA_WHISPER_DEVICE``):
-      - ``auto`` (default): try CUDA first; fall back to CPU on init failure
-      - ``cuda``: CUDA; raises if unavailable
-      - ``cpu``: CPU (int8)
+    global _model, _processor
 
-    Compute type (``IFA_WHISPER_COMPUTE_TYPE``):
-      - On CUDA, default ``int8_float16`` — int8 weights with float16
-        activations. More numerically stable than pure float16 (which
-        sometimes returns empty for quiet utterances) while keeping
-        most of the speed.
-      - On CPU, default ``int8``.
-      - Override with ``float16``, ``float32``, ``int8_float32``, etc.
-        if you want to experiment.
-
-    CUDA requires ``nvidia-cublas-cu12`` + ``nvidia-cudnn-cu12`` (shipped
-    on Windows/Linux via requirements.txt); on macOS we stay on CPU.
-    """
-    global _model
     if _model is None:
-        from faster_whisper import WhisperModel
+        import torch
+        from transformers import (
+            AutoModelForSpeechSeq2Seq,
+            AutoProcessor,
+        )
 
-        model_name = os.environ.get("IFA_WHISPER_MODEL", "small.en")
-        device = os.environ.get("IFA_WHISPER_DEVICE", "auto").lower()
-        compute_type_override = os.environ.get("IFA_WHISPER_COMPUTE_TYPE")
+        model_name = os.environ.get(
+            "IFA_WHISPER_MODEL",
+            "Oriserve/Whisper-Hindi2Hinglish-Swift",
+        )
 
-        # NOTE: first arg is ``model_size_or_path`` (positional). There
-        # is no keyword ``size=``; passing size= as kwarg raises TypeError.
-        if device in ("auto", "cuda"):
-            gpu_compute = compute_type_override or "int8_float16"
-            try:
-                _model = WhisperModel(
-                    model_name, device=device, compute_type=gpu_compute
-                )
-                print(f"[whisper] loaded {model_name} on {device} ({gpu_compute})")
-                return _model
-            except Exception as exc:
-                if device == "cuda":
-                    # Explicit cuda request with no CUDA → fail loudly
-                    raise
-                print(
-                    f"[whisper] GPU init failed ({exc}); falling back to CPU int8. "
-                    "On Windows/Linux with an Nvidia GPU, install "
-                    "nvidia-cublas-cu12 + nvidia-cudnn-cu12 to enable CUDA."
-                )
-        cpu_compute = compute_type_override or "int8"
-        _model = WhisperModel(model_name, device="cpu", compute_type=cpu_compute)
-        print(f"[whisper] loaded {model_name} on cpu ({cpu_compute})")
-    return _model
+        device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+        dtype = (
+            torch.float16
+            if device == "cuda"
+            else torch.float32
+        )
+
+        print(
+            f"[whisper] loading {model_name} "
+            f"on {device}"
+        )
+
+        _processor = AutoProcessor.from_pretrained(
+            model_name
+        )
+
+        _model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_name,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+        )
+
+        _model.to(device)
+        _model.eval()
+
+        print(
+            f"[whisper] loaded {model_name}"
+        )
+
+    return _model, _processor
 
 
-def transcribe_array(audio: np.ndarray, *, language: str = "en") -> str:
-    """Transcribe a float32 numpy array of 16 kHz mono audio.
-
-    Returns the concatenated segment text with leading/trailing whitespace
-    stripped. If Whisper raises (rare, but possible on corrupted input
-    or model-load failures mid-session), returns an empty string so the
-    agent loop treats the turn as a no-op rather than crashing.
+def transcribe_array(
+    audio: np.ndarray,
+    *,
+    language: str = "hi"
+) -> str:
     """
+    Transcribe float32 numpy array at 16kHz mono.
+
+    Keeps the same interface as faster-whisper.
+    """
+
     if audio is None or len(audio) == 0:
         return ""
+
     if audio.dtype != np.float32:
         audio = audio.astype(np.float32)
 
     try:
-        model = _get_model()
-        segments, _info = model.transcribe(
+        import torch
+
+        model, processor = _get_model()
+
+        device = next(model.parameters()).device
+
+        inputs = processor(
             audio,
-            language=language,
-            vad_filter=False,  # we already VAD'd in Unit 3
-            beam_size=5,
+            sampling_rate=16000,
+            return_tensors="pt",
         )
-        # segments is a generator; materialize and join
-        text = " ".join(seg.text for seg in segments)
+
+        inputs = {
+            k: v.to(
+                device=device,
+                dtype=next(model.parameters()).dtype
+                if v.dtype.is_floating_point
+                else v.dtype,
+            )
+            for k, v in inputs.items()
+        }
+
+        with torch.no_grad():
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=128,
+                language=language,
+                task="transcribe",
+            )
+
+        text = processor.batch_decode(
+            output_ids,
+            skip_special_tokens=True,
+        )[0]
+
         return text.strip()
-    except RuntimeError:
+
+    except Exception as exc:
+        print(f"[whisper] transcription failed: {exc}")
         return ""
 
 
 def transcribe(audio_path: str) -> str:
-    """File-path variant — reuses the same lazy-loaded model.
-
-    Kept for the transitional ``ifa.voice.input.get_audio_input`` shim.
-    Once Unit 5 replaces that with ``VoiceInput.get`` calling
-    ``transcribe_array`` directly, this function can be removed.
     """
+    File-path compatibility wrapper.
+    """
+
     try:
-        model = _get_model()
-        segments, _info = model.transcribe(
+        import soundfile as sf
+
+        audio, sample_rate = sf.read(
             audio_path,
-            beam_size=5,
-            vad_filter=True,
+            dtype="float32",
         )
-        text = " ".join(seg.text for seg in segments)
-        return text.strip()
-    except RuntimeError:
+
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+
+        # Resampling if required
+        if sample_rate != 16000:
+            import librosa
+
+            audio = librosa.resample(
+                audio,
+                orig_sr=sample_rate,
+                target_sr=16000,
+            )
+
+        return transcribe_array(audio)
+
+    except Exception as exc:
+        print(f"[whisper] file transcription failed: {exc}")
         return ""

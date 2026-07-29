@@ -20,7 +20,7 @@ import sqlite3
 import sys
 import threading
 import time
-
+import traceback
 from ifa.core.agent_stream import (
     MODEL,
     agent_turn_stream,
@@ -34,35 +34,20 @@ from ifa.services.activation_server import ActivationService, start_activation_s
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import init_input
-from ifa.core.personality import persona, tool_framing, remember_nudge
 from ifa.utils.speech_queue import SpeechQueue
-from pathlib import Path
-import uuid
+from concurrent.futures import ThreadPoolExecutor
+from ifa.skills.vibe.vibe import VibeManager
+from ifa.skills.acknowledgement.acknowledgement import AcknowledgementSkill
 
-# MEMORY_FILE = Path("./memory.md")
-# def load_memories() -> str:
-#     if not MEMORY_FILE.exists():
-#         return ""
-
-#     return MEMORY_FILE.read_text(encoding="utf-8").strip()
-
-# def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
-#     parts = [persona, tool_framing(nonce), remember_nudge]
-#     memory = load_memories()
-#     if memory:
-#         parts.append(
-#             "Long-term memory:\n"
-#             "The following information has been intentionally remembered from previous conversations.\n"
-#             "Treat it as persistent context.\n\n"
-#             f"{memory}"
-#         )
-#     return "\n\n".join(parts)
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
 
 CONTACTS = {
     "john":"+918876700414",
 }
+
+executor = ThreadPoolExecutor(max_workers=2)
+
 def resume_reminders(tts: TTSService, db_path: str) -> None:
     """Re-arm any reminders persisted in SQLite. Called once at startup."""
     conn = sqlite3.connect(db_path)
@@ -125,6 +110,8 @@ def run() -> None:
     speech_queue = SpeechQueue(
         handler=tts.enqueue
     )
+    executor = ThreadPoolExecutor(max_workers=2)
+    ack_skill = AcknowledgementSkill()
     ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
     register_all()
 
@@ -133,6 +120,9 @@ def run() -> None:
 
     # 7. Initialize input mode (text default; IFA_MODE=voice opts in)
     input_mode = init_input(tts)
+
+    # getting vibes ready:
+    VibeManager(tts)
 
     # 8. Main loop
     memory = Memory()
@@ -155,12 +145,33 @@ def run() -> None:
         if user_input.lower() in ["exit", "quit"]:
             break
 
-        reply = agent_turn_stream(
-            user_text=user_input,
-            ctx=ctx,
-            memory=memory,
-            on_sentence=on_sentence,
+        first_sentence_spoken = threading.Event()
+
+        def streaming_callback(sentence: str):
+            first_sentence_spoken.set()
+            on_sentence(sentence)
+
+        ack_future = executor.submit(
+            ack_skill.generate,
+            user_input,
         )
+
+        agent_future = executor.submit(
+            agent_turn_stream,
+            user_input,
+            ctx,
+            memory,
+            streaming_callback,
+        )
+        if not first_sentence_spoken.wait(timeout=0.2):
+            try:
+                acknowledgement = ack_future.result()
+                on_sentence(acknowledgement)
+
+            except Exception:
+                traceback.print_exc()
+
+        reply = agent_future.result()
         # Arm the follow-up window: in voice mode, the next utterance
         # within ~5s skips the wake word; text mode is a no-op.
         input_mode.arm_followup()

@@ -1,17 +1,21 @@
 from ifa.core.context import AgentContext
-from ifa.skills.home import Home
+from ifa.skills.vibe.vibe import VibeManager
 from ifa.skills.enums import Vibes
 from ifa.tools.registry import Tool, register
 
 def _handler(args: dict, ctx: AgentContext) -> str:
     to_vibe = args["to_vibe"]
-    return Home(ctx.tts).change_vibe(to_vibe)
+    try:
+        return VibeManager.get_instance().change_vibe(to_vibe)
+    except Exception as err:
+        return err
 
 TOOL = Tool(
-    name="select_vibe",
+    name="switch_mode",
     description=(
-        "call this when user says about turning on the vibe or gaming vibe or gaming mode or its time to play (usually gets misread as wipes/bikes) or turning on/off the vibe."
-        "The vibe that we currently have is 'NORMAL' and 'GAMING', so when user says turn on the vibe that would usually mean 'gaming'."
+        "call this when user wants to change mode."
+        "when user says about turning on the vibe or gaming vibe or gaming mode or its time to play (usually gets misread as wipes/bikes) or turning on/off the vibe."
+        "so when user says turn on the vibe that would usually mean 'gaming'. the possible values are  GAMING | NORMAL"
     ),
     parameters={
         "type": "object",
@@ -19,7 +23,7 @@ TOOL = Tool(
             "to_vibe": {
                 "type": "string",
                 "enum": [m.value for m in Vibes],
-                "description": "Target vibe",
+                "description": "Target vibe GAMING | NORMAL",
             },
         },
         "required": ["to_vibe"],

@@ -8,7 +8,7 @@ Models fetched (the wake-word and Whisper variants come from the
 .env / shell env, so this script sees the same models the runtime
 will eventually load):
   - openWakeWord (e.g. ``ifa``) — wake-word detector
-  - faster-whisper (e.g. ``small.en``) — STT
+  - HuggingFace Whisper (e.g. ``Oriserve/Whisper-Hindi2Hinglish-Swift``) — STT
 
 Both are idempotent: if the model is already cached locally, the call
 returns immediately without hitting the network. The script is safe
@@ -57,13 +57,31 @@ def ensure_openwakeword_models() -> None:
 
 
 def ensure_whisper_model() -> None:
-    model_name = os.environ.get("IFA_WHISPER_MODEL", "small.en")
-    _step(f"ensuring faster-whisper model '{model_name}' is cached...")
-    # Constructing the model triggers a download to the HF cache if missing.
-    # On subsequent runs, this hits the cache and is fast.
-    from faster_whisper import WhisperModel
-    WhisperModel(model_name, device="cpu", compute_type="int8")
-    _step("faster-whisper ready.")
+    model_name = os.environ.get(
+        "IFA_WHISPER_MODEL",
+        "Oriserve/Whisper-Hindi2Hinglish-Swift",
+    )
+
+    _step(
+        f"ensuring transformers Whisper model '{model_name}' is cached..."
+    )
+
+    from transformers import (
+        AutoModelForSpeechSeq2Seq,
+        AutoProcessor,
+    )
+
+    # Download processor files
+    AutoProcessor.from_pretrained(model_name)
+
+    # Download model weights
+    AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_name,
+        torch_dtype="auto",
+        low_cpu_mem_usage=True,
+    )
+
+    _step("transformers Whisper ready.")
 
 
 def main() -> int:

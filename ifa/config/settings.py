@@ -9,6 +9,11 @@ import os
 # without requiring a user-specific .env file; startup validates it.
 OLLAMA_MODEL = os.environ.get("IFA_OLLAMA_MODEL", "").strip() or None
 
+OLLAMA_ACK_MODEL = os.environ.get("IFA_OLLAMA_ACK_MODEL", "").strip() or None
+
+MAIN_OLLAMA_URL =  os.environ.get("MAIN_OLLAMA_URL", "").strip() or "http://localhost:11434"
+ACK_OLLAMA_URL =  os.environ.get("ACK_OLLAMA_URL", "").strip() or "http://localhost:11435"
+
 # Qwen3 enables an internal reasoning pass by default. That is useful for
 # difficult problems, but it makes short voice-assistant turns noticeably
 # slower. Set IFA_OLLAMA_THINK=1 to trade latency for more deliberate answers.

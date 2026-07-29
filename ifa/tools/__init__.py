@@ -20,8 +20,8 @@ def register_all() -> None:
     modules. Calling `register(TOOL)` here directly with the cached
     `TOOL` constants guarantees the registry is populated regardless.
     """
-    from ifa.tools import memory, n8n, reminder, time, vibe, system, spotify, whatsApp, vision
+    from ifa.tools import memory, n8n, reminder, time, vibe, system, spotify, whatsApp, vision, gamelauncher
     from ifa.tools.registry import register
 
-    for mod in (time, reminder, memory, n8n, vibe, system, spotify, whatsApp, vision):
+    for mod in (time, reminder, memory, n8n, vibe, system, spotify, whatsApp, vision, gamelauncher):
         register(mod.TOOL)

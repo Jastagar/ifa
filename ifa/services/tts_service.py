@@ -1,13 +1,14 @@
 
 import os
-import re
 import threading
 import queue
 import time
-
 import numpy as np
 import sounddevice as sd
 import torch
+import contextlib
+import io
+os.environ["TQDM_DISABLE"] = "1"
 
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 # from chatterbox.mtl_tts import ChatterboxMultilingualTTS
@@ -104,17 +105,28 @@ class TTSService:
                 for sentence in self._split_sentences(text):
                     if self._stop_event.is_set():
                         break
-                    wav = self.model.generate(
-                        sentence,
-                        audio_prompt_path=self.voice_path
+
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        with contextlib.redirect_stderr(io.StringIO()):
+                            wav = self.model.generate(
+                                sentence,
+                                audio_prompt_path=self.voice_path
+                            )
+
+                    audio = (
+                        wav.squeeze()
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
                     )
-                    audio = wav.squeeze().detach().cpu().numpy().astype(np.float32)
+
                     self._audio_queue.put((audio, None))
+
             except Exception as exc:
                 _console.print(f"Producer error: {exc}")
+
             finally:
-                # This marker sits behind this job's final audio, so playback
-                # completes before synchronous callers are released.
                 self._audio_queue.put((None, completed))
                 self._text_queue.task_done()
 

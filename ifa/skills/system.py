@@ -10,6 +10,8 @@ APP_COMMANDS = {
     "win32": {
         App.SPOTIFY: "spotify:",
         App.VS_CODE: "code",
+        App.BRAVE: "C:/Progra~1/BraveSoftware/Brave-Browser/Application/brave.exe",
+        App.PRIVATE_BRAVE: ["C:/Progra~1/BraveSoftware/Brave-Browser/Application/brave.exe","--incognito"],
     },
     "darwin": {
         App.SPOTIFY: ["open", "-a", "Spotify"],
@@ -53,8 +55,8 @@ class Application(Skill):
         platform = sys.platform
 
         print("APP CALLED")
-        print(app)
-        print(arguments)
+        print(f"App: {app}")
+        print(f"Arg: {arguments}")
 
         if platform not in APP_COMMANDS:
             raise ValueError(f"Unsupported platform: {platform}")
@@ -70,9 +72,10 @@ class Application(Skill):
         cmd = command_map[app]
 
         if platform == "win32":
-            if isinstance(cmd, str):
-                os.startfile(cmd)
-            else:
+            if isinstance(cmd, list):
+                cmd.append(arguments)
                 subprocess.Popen(cmd)
+            else:
+                os.startfile(cmd)
         else:
             subprocess.Popen(cmd if isinstance(cmd, list) else [cmd])

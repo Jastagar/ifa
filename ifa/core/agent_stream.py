@@ -6,12 +6,13 @@ import httpx
 from ifa.config.settings import OLLAMA_MODEL
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
-from ifa.core.personality import persona, tool_framing, remember_nudge
+from ifa.core.personality import persona, tool_framing
 from ifa.services.ollama_client import (
     build_tool_result_message,
     stream_chat,
 )
 from pathlib import Path
+from ifa.skills.vibe.vibe import VibeManager
 from ifa.tools import registry
 
 MEMORY_FILE = Path("./memory.md")
@@ -30,7 +31,7 @@ SPEECH_BATCH_CHARS = 220
 
 
 def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
-    parts = [persona, tool_framing(nonce), remember_nudge]
+    parts = [persona, tool_framing(nonce), VibeManager.get_system_based_on_vibe()]
     memory = load_memories()
     if memory:
         parts.append(
@@ -89,6 +90,7 @@ def _flush_speech_batch(parts: list[str], on_sentence) -> None:
 def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce)},
+        *memory.get_recent(5),
         {"role": "user", "content": user_text},
     ]
 

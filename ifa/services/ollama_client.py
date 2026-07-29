@@ -10,11 +10,9 @@ import json
 import base64
 import io
 from PIL import Image
-from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_THINK
+from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_THINK, MAIN_OLLAMA_URL, ACK_OLLAMA_URL
 
-OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_TIMEOUT = 60.0
-
 
 def build_tool_result_message(tool_name: str, content: str) -> dict:
     """Build a tool-role message for Ollama's /api/chat.
@@ -52,7 +50,7 @@ def stream_chat(
 
     with httpx.stream(
         "POST",
-        f"{OLLAMA_BASE_URL}/api/chat",
+        f"{MAIN_OLLAMA_URL}/api/chat",
         json=payload,
         timeout=timeout,
     ) as response:
@@ -114,7 +112,32 @@ def chat(
         payload["tools"] = tools
 
     response = httpx.post(
-        f"{OLLAMA_BASE_URL}/api/chat",
+        f"{MAIN_OLLAMA_URL}/api/chat",
+        json=payload,
+        timeout=timeout,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+def ack_chat(
+    model: str,
+    messages: list[dict],
+    timeout: float = DEFAULT_TIMEOUT,
+    think: bool = OLLAMA_THINK,
+) -> dict:
+    messages = [message.copy() for message in messages]
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "think": think,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+    }
+
+    response = httpx.post(
+        f"{ACK_OLLAMA_URL}/api/chat",
         json=payload,
         timeout=timeout,
     )
@@ -136,16 +159,16 @@ def check_health(required_model: str) -> None:
     """
     # Check 1+2: list tags, verify model present
     try:
-        tags_response = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5.0)
+        tags_response = httpx.get(f"{MAIN_OLLAMA_URL}/api/tags", timeout=5.0)
         tags_response.raise_for_status()
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         raise RuntimeError(
-            f"Ollama is not running at {OLLAMA_BASE_URL}. "
+            f"Ollama is not running at {MAIN_OLLAMA_URL}. "
             "Start it with `ollama serve` (or install it from https://ollama.com)."
         ) from exc
     except httpx.HTTPError as exc:
         raise RuntimeError(
-            f"Ollama responded with an error at {OLLAMA_BASE_URL}: {exc}"
+            f"Ollama responded with an error at {MAIN_OLLAMA_URL}: {exc}"
         ) from exc
 
     models = tags_response.json().get("models", [])

@@ -14,4 +14,4 @@ ifa/config/n8n_workflows.yaml
 # Claude Code / compound-engineering local state
 .compound-engineering/
 .context/
-memory.md
+/memory.md
