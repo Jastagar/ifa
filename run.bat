@@ -60,43 +60,50 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM -------- 3. Ollama running? --------
-curl -s -m 3 http://localhost:11434/api/tags >nul 2>&1
+REM -------- 3. Ollama configuration --------
+REM Run Ifa's Ollama instance on a dedicated port so it does not
+REM conflict with another Ollama instance using the default 11434.
+set "OLLAMA_HOST=127.0.0.1:11435"
+
+REM -------- 4. Ollama running? --------
+curl -s -m 3 http://127.0.0.1:11435/api/tags >nul 2>&1
 if errorlevel 1 (
-    echo [setup] Ollama is not running. Starting it in the background...
-    start "Ollama" /MIN cmd /c "ollama serve"
+    echo [setup] Ollama is not running on %OLLAMA_HOST%. Starting it in the background...
+    start "Ollama - Ifa" /MIN cmd /c "set OLLAMA_HOST=127.0.0.1:11435 && ollama serve"
+
     set /a _tries=0
     :wait_ollama
     timeout /t 1 /nobreak >nul
-    curl -s -m 2 http://localhost:11434/api/tags >nul 2>&1
+
+    curl -s -m 2 http://127.0.0.1:11435/api/tags >nul 2>&1
     if not errorlevel 1 goto :ollama_ok
+
     set /a _tries+=1
     if !_tries! LSS 15 goto :wait_ollama
-    echo [error] Ollama did not come up within 15 seconds. Check the Ollama window.
+
+    echo [error] Ollama did not come up within 15 seconds.
+    echo         Check the Ollama process/window.
     exit /b 1
 )
+
 :ollama_ok
 
-REM -------- 4. Configured Ollama model pulled? --------
+REM -------- 5. Configured Ollama model pulled? --------
 set "IFA_OLLAMA_MODEL="
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if /I "%%A"=="IFA_OLLAMA_MODEL" set "IFA_OLLAMA_MODEL=%%B"
 )
+
 if not defined IFA_OLLAMA_MODEL (
     echo [error] IFA_OLLAMA_MODEL is not set in .env.
     exit /b 1
 )
+
 ollama list 2>nul | findstr /I /L /C:"%IFA_OLLAMA_MODEL%" >nul
 if errorlevel 1 (
     echo [setup] %IFA_OLLAMA_MODEL% not found. Pulling now (one-time)...
     ollama pull "%IFA_OLLAMA_MODEL%" || exit /b 1
 )
-
-REM -------- 5. Voice-mode models pre-cached --------
-REM Explicit pre-download so runtime can run with HF_HUB_OFFLINE=1.
-REM openWakeWord (~1 MB) + faster-whisper small.en (~470 MB) — idempotent.
-set "PYTHONPATH=."
-"venv\Scripts\python.exe" -m scripts.setup_voice_models || exit /b 1
 
 REM -------- 6. Launch Ifa --------
 echo.
