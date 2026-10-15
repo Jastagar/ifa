@@ -23,14 +23,17 @@ def load_memories() -> str:
     return MEMORY_FILE.read_text(encoding="utf-8").strip()
 MODEL = OLLAMA_MODEL
 
-MAX_ITERATIONS = 1
+# How many rounds of tool calls one user turn may make before the model must
+# answer in plain text. Each round is a full LLM call, so this is also a
+# latency budget: 3 rounds ≈ 4 model calls worst case.
+MAX_TOOL_HOPS = 3
 # Submit each completed model sentence immediately. The TTS producer runs
 # independently from playback and can pre-generate every available sentence.
 SPEECH_BATCH_SENTENCES = 1
 SPEECH_BATCH_CHARS = 220
 
 
-def _build_system_prompt(nonce: str, facts: list[str] | None = None) -> str:
+def _build_system_prompt(nonce: str) -> str:
     parts = [persona, tool_framing(nonce), VibeManager.get_system_based_on_vibe()]
     memory = load_memories()
     if memory:
@@ -87,7 +90,7 @@ def _flush_speech_batch(parts: list[str], on_sentence) -> None:
     parts.clear()
 
 
-def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
+def _build_messages(user_text: str, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce)},
         *memory.get_recent(5),
@@ -148,22 +151,21 @@ def _tool_call_errors(tool_calls: list[dict]) -> list[str]:
 def _append_tool_results(
     messages: list[dict], tool_calls: list[dict], ctx: AgentContext, nonce: str
 ) -> None:
-    """Dispatch valid tool calls and append their safely-delimited results."""
-    for tool_call in tool_calls:
-        function = tool_call.get("function", {})
-        name = function.get("name")
-        args = function.get("arguments", {})
-        if not name:
-            messages.append(build_tool_result_message("unknown", "ERROR: missing tool name"))
-            return
+    """Dispatch every tool call and append one delimited result per call.
 
-        result = registry.dispatch(name, args, ctx)
+    Every call gets a result, even when an earlier one failed: the assistant
+    message we just appended promised N calls, so the model must see N
+    results. Errors are results too — the model reads them on the next hop
+    and can retry or explain.
+    """
+    for tool_call in tool_calls:
+        function = tool_call["function"]
+        name = function["name"]
+        result = registry.dispatch(name, function["arguments"], ctx)
         messages.append(build_tool_result_message(
             tool_name=name,
             content=registry.delimit_as_data(nonce, name, result),
         ))
-        if isinstance(result, str) and result.startswith("ERROR"):
-            return
 
 
 def _remember_turn(memory: Memory, user_text: str, assistant_text: str) -> None:
@@ -178,24 +180,29 @@ def agent_turn_stream(
     on_sentence=None,
 ) -> str:
 
+    """Run one user turn as a ReAct loop: think → act (tools) → observe → repeat.
+
+    The model may call tools for up to MAX_TOOL_HOPS rounds, seeing each
+    round's results before deciding the next step. On the final round tools
+    are withheld, so the model has to answer with what it has learned rather
+    than the loop giving up.
+    """
     nonce = _new_nonce()
-    messages = _build_messages(user_text, ctx, memory, nonce)
+    messages = _build_messages(user_text, memory, nonce)
     tool_hops = 0
     retries_remaining = 1
 
     while True:
+        allow_tools = tool_hops < MAX_TOOL_HOPS
         try:
             assistant_msg, pending_speech = _stream_assistant_message(
-                messages, allow_tools=tool_hops == 0, on_sentence=on_sentence
+                messages, allow_tools=allow_tools, on_sentence=on_sentence
             )
         except (KeyError, httpx.HTTPError):
             return "I hit a problem talking to the language model."
 
-        tool_calls = assistant_msg["tool_calls"]
+        tool_calls = assistant_msg["tool_calls"] if allow_tools else []
         if tool_calls:
-            if tool_hops >= MAX_ITERATIONS:
-                return "I couldn't finish that in one step."
-
             malformed_reasons = _tool_call_errors(tool_calls)
             if malformed_reasons and retries_remaining:
                 retries_remaining -= 1

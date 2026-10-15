@@ -86,7 +86,7 @@ The voice thread feeds the same `agent_turn` the text-mode loop does. The main t
 | File | Role |
 |---|---|
 | **[ifa/core/orchestrator.py](../ifa/core/orchestrator.py)** | The main loop. Does startup (health check Ollama, load n8n config, init DB, build TTS + AgentContext, register tools, resume pending reminders), then loops on `input_mode.get()` → `agent_turn` → `tts.speak` → `arm_followup`. |
-| **[ifa/core/agent.py](../ifa/core/agent.py)** | `agent_turn(user_text, ctx, memory)` — one conversational turn. Builds messages with system prompt + memory + new input, POSTs to Ollama with the tool schema, dispatches any tool calls the LLM emits, and feeds the results back. Stage 1's `MAX_ITERATIONS=1` caps tool-call hops per turn. |
+| **[ifa/core/agent_stream.py](../ifa/core/agent_stream.py)** | `agent_turn_stream(user_text, ctx, memory, on_sentence)` — one conversational turn as a ReAct loop. Builds messages with system prompt + memory + new input, calls Ollama with the tool schema, dispatches every tool call the LLM emits (one result per call, errors included), and feeds the results back so the model can take another step. `MAX_TOOL_HOPS=3` caps tool rounds per turn; on the last round tools are withheld so the model must answer. Sentences are handed to TTS as they complete. |
 | **[ifa/core/context.py](../ifa/core/context.py)** | `AgentContext` — a frozen-ish dataclass carrying `tts`, `db_path`, and `n8n_config`. Threaded through every tool handler so handlers can side-effect without module-level singletons. |
 | **[ifa/core/memory.py](../ifa/core/memory.py)** | `Memory` — bounded list of `{role, content}` dicts. Short-term chat history, NOT long-term knowledge. Long-term facts live in SQLite via the `remember_fact` tool. |
 
