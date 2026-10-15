@@ -20,17 +20,5 @@ class ScreenCaptureService:
             monitor=self._monitor,
         )
 
-    def capture_monitor(self, monitor: int) -> Image.Image:
-        shot = self._sct.grab(self._sct.monitors[monitor])
-
-        return Image.frombytes(
-            "RGB",
-            shot.size,
-            shot.rgb,
-        )
-
-    def monitor_count(self) -> int:
-        return len(self._sct.monitors) - 1
-
     def close(self):
         self._sct.close()

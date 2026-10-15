@@ -11,7 +11,7 @@ Topology::
 
     main thread                   voice thread (daemon)
     -----------                   ---------------------
-    get_input()                   sounddevice.InputStream (shared)
+    input_mode.get()              sounddevice.InputStream (shared)
       └── queue.get() ─────┐        │
                            │      ┌─┴── wait_for_wake (1280-sample frames)
                            │      └── capture_utterance (512-sample frames)
@@ -56,20 +56,6 @@ class _InputMode:
 class _TextMode(_InputMode):
     def get(self) -> str:
         return input("You: ")
-
-
-def get_input() -> str:
-    """Backwards-compatible helper kept for any lingering callers.
-
-    New code should use ``init_input(tts)`` which returns an ``_InputMode``
-    object supporting both ``get()`` and ``arm_followup()``.
-    """
-    mode = os.environ.get("IFA_MODE", "text").lower()
-    if mode == "voice":
-        voice = VoiceInput(TTSService())
-        voice.start()
-        return voice.get()
-    return _TextMode().get()
 
 
 class VoiceInput(_InputMode):

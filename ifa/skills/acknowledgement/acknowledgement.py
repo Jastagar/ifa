@@ -2,7 +2,7 @@
 
 from random import choice
 
-from ifa.config.settings import OLLAMA_ACK_MODEL, ACK_OLLAMA_URL
+from ifa.config.settings import OLLAMA_ACK_MODEL
 from ifa.services.ollama_client import ack_chat
 from ifa.skills.acknowledgement.phrases import FALLBACKS
 from ifa.skills.acknowledgement.prompts import SYSTEM_PROMPT

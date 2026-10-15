@@ -212,27 +212,5 @@ class TranscribeArrayTests(unittest.TestCase):
         self.assertFalse(kwargs.get("vad_filter", True))
 
 
-class TranscribePathTests(unittest.TestCase):
-    """Backwards-compat file-path variant kept for the transitional
-    ifa.voice.input shim until Unit 5 replaces it."""
-
-    def setUp(self) -> None:
-        self.model_cls, self.model_inst = _install_fake_whisper()
-        _reset_stt_module_state()
-
-    def tearDown(self) -> None:
-        _uninstall_fake_whisper()
-        _reset_stt_module_state()
-
-    def test_transcribe_path_reuses_same_lazy_model(self):
-        from ifa.voice.stt import transcribe, transcribe_array
-
-        transcribe_array(np.zeros(100, dtype=np.float32))
-        transcribe("/tmp/nonexistent.wav")
-        # Model constructed once, transcribe called twice
-        self.assertEqual(self.model_cls.call_count, 1)
-        self.assertEqual(self.model_inst.transcribe.call_count, 2)
-
-
 if __name__ == "__main__":
     unittest.main()

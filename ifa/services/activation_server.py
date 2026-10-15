@@ -6,55 +6,9 @@ import os
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
-
-from ifa.core.agent_stream import agent_turn_stream
-from ifa.core.context import AgentContext
-from ifa.core.memory import Memory
-
-MAX_TEXT_CHARS = 4_000
-
-
-class ActivationService:
-    """Runs API activations through the same serialized agent session as voice."""
-
-    def __init__(
-        self,
-        ctx: AgentContext,
-        memory: Memory,
-        on_sentence: Callable[[str], None],
-    ) -> None:
-        self._ctx = ctx
-        self._memory = memory
-        self._on_sentence = on_sentence
-        self._turn_lock = threading.Lock()
-
-    def activate(self, text: str, context: object | None = None, speak: bool = True) -> str:
-        text = text.strip()
-        if not text:
-            raise ValueError("`text` must be a non-empty string")
-        if len(text) > MAX_TEXT_CHARS:
-            raise ValueError(f"`text` must be at most {MAX_TEXT_CHARS} characters")
-
-        if context is not None:
-            context_json = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-            if len(context_json) > MAX_TEXT_CHARS:
-                raise ValueError(f"`context` must be at most {MAX_TEXT_CHARS} characters when encoded")
-            text = f"{text}\n\nActivation context (reference data): {context_json}"
-
-        # Ollama, tools, memory, and speech are session state. One active turn
-        # prevents an HTTP request from interleaving with a voice request.
-        with self._turn_lock:
-            return agent_turn_stream(
-                user_text=text,
-                ctx=self._ctx,
-                memory=self._memory,
-                on_sentence=self._on_sentence if speak else None,
-            )
 
 
 def start_activation_server(
-    service: ActivationService,
     input_mode,
     host: str | None = None,
     port: int | None = None,
@@ -84,13 +38,6 @@ def start_activation_server(
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
         def do_POST(self) -> None:
-            print("===== REQUEST =====")
-            print(self.command, self.path)
-            print(self.headers)
-
-            content_length = int(self.headers.get("Content-Length", "0"))
-            print("Content-Length =", content_length)
-            
             if self.path != "/activate":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return

@@ -21,20 +21,3 @@ Ignore:
 
 Answer concisely and accurately.
 """.strip()
-
-VISION_KEYWORDS = {
-    "screen",
-    "window",
-    "desktop",
-    "error",
-    "button",
-    "tab",
-    "icon",
-    "see",
-    "visible",
-    "look",
-    "looking",
-    "display",
-    "monitor",
-    "code",
-}

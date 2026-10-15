@@ -1,13 +1,8 @@
-from ifa.skills.base import Skill
 from ifa.skills.vibe.system_prompts import __vibe_based_prompts__
 from ifa.skills.enums import Vibes
-import sounddevice as sd
-import soundfile as sf
-from pathlib import Path
 
-audio_path = Path(__file__).parent.parent.parent / "audios" / "vibegamingmusic.wav"
-data, sr = sf.read(audio_path)
-class VibeManager(Skill):
+
+class VibeManager:
     _instance = None
     _initialized = False
 
@@ -26,14 +21,8 @@ class VibeManager(Skill):
         print(f"Default vibe is: NORMAL")
 
     def change_vibe(self, to_vibe: Vibes) -> str:
-        # if to_vibe == "GAMING":
-        #     sd.play(data, sr)
-
         self.current_vibe = to_vibe
         return f"Vibe changed to {to_vibe} and updated system instructions are: {__vibe_based_prompts__[to_vibe]}"
-
-    def get_current_vibe(self) -> Vibes:
-        return self.current_vibe
 
     @staticmethod
     def get_instance():

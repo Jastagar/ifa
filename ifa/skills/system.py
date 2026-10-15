@@ -1,4 +1,3 @@
-from ifa.skills.base import Skill
 from ifa.skills.enums import App
 from datetime import datetime
 import subprocess
@@ -24,15 +23,12 @@ APP_COMMANDS = {
 }
 
 
-class TimeSkill(Skill):
-    def can_handle(self, text: str) -> bool:
-        return "time" in text.lower()
-
+class TimeSkill:
     def handle(self, text: str) -> str:
         return f"Current time is {datetime.now().strftime('%H:%M')}"
 
 
-class Application(Skill):
+class Application:
 
     def __init__(self, tts):
         self.tts = tts

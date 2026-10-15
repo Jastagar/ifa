@@ -56,30 +56,6 @@ def _handler(args: dict, ctx: AgentContext) -> str:
     return "Got it, I'll remember that."
 
 
-def load_memories(limit: int = 50) -> str:
-    """
-    Returns the contents of memory.md.
-    The limit is applied to memory bullet points.
-    """
-
-    _ensure_memory_file()
-
-    lines = MEMORY_FILE.read_text(encoding="utf-8").splitlines()
-
-    result = []
-    count = 0
-
-    for line in lines:
-        result.append(line)
-
-        if line.startswith("- "):
-            count += 1
-            if count >= limit:
-                break
-
-    return "\n".join(result)
-
-
 TOOL = Tool(
     name="remember",
     description=(

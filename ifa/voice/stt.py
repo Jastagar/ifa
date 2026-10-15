@@ -137,36 +137,3 @@ def transcribe_array(
     except Exception as exc:
         print(f"[whisper] transcription failed: {exc}")
         return ""
-
-
-def transcribe(audio_path: str) -> str:
-    """
-    File-path compatibility wrapper.
-    """
-
-    try:
-        import soundfile as sf
-
-        audio, sample_rate = sf.read(
-            audio_path,
-            dtype="float32",
-        )
-
-        if len(audio.shape) > 1:
-            audio = audio.mean(axis=1)
-
-        # Resampling if required
-        if sample_rate != 16000:
-            import librosa
-
-            audio = librosa.resample(
-                audio,
-                orig_sr=sample_rate,
-                target_sr=16000,
-            )
-
-        return transcribe_array(audio)
-
-    except Exception as exc:
-        print(f"[whisper] file transcription failed: {exc}")
-        return ""

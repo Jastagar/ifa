@@ -170,13 +170,5 @@ class ReminderSkillScheduleTests(unittest.TestCase):
         self.assertIn("ping", call_arg)
 
 
-class ReminderSkillBackwardCompatTests(unittest.TestCase):
-    """handle() still works (extract_reminder-based) until Unit 6 deletes it."""
-
-    def test_handle_still_exists(self):
-        from ifa.skills.reminder import ReminderSkill
-        self.assertTrue(hasattr(ReminderSkill, "handle"))
-
-
 if __name__ == "__main__":
     unittest.main()

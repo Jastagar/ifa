@@ -1,9 +1,7 @@
 """Reminder skill — persists a task in SQLite, fires a TTS notification later.
 
 The only method called in production is ``schedule(task, seconds)``, by
-the ``set_reminder`` tool adapter in ``ifa/tools/reminder.py``. The
-``Skill``-base ``can_handle``/``handle`` interface is vestigial (see
-``ifa/skills/base.py`` for why).
+the ``set_reminder`` tool adapter in ``ifa/tools/reminder.py``.
 
 Lifecycle of a reminder
 -----------------------
@@ -34,21 +32,15 @@ import threading
 import time
 import sqlite3
 
-from ifa.skills.base import Skill
 from ifa.services.db import DB_PATH
 
 
-class ReminderSkill(Skill):
+class ReminderSkill:
     """Schedules and fires reminders. Only ``schedule()`` is called externally."""
 
     def __init__(self, tts, db_path: str | None = None):
         self.tts = tts
         self.db_path = db_path or DB_PATH
-
-    def can_handle(self, text: str) -> bool:
-        # Vestigial — never called in Stage 1. See module docstring.
-        t = text.lower()
-        return "remind" in t or "tell me" in t
 
     def schedule(self, task: str, seconds: int) -> str:
         """Store a reminder in SQLite and spawn the firing daemon thread.

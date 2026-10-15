@@ -4,10 +4,9 @@ import json
 import subprocess
 from pathlib import Path
 
-from ifa.skills.base import Skill
 
 
-class GameLauncher(Skill):
+class GameLauncher:
 
     def __init__(self):
         self.games = self._load_games()

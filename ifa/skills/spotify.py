@@ -1,11 +1,10 @@
 # ifa/skills/spotify.py
 
-from ifa.skills.base import Skill
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 
-class SpotifySkill(Skill):
+class SpotifySkill:
     def __init__(self, tts):
         self.tts = tts
 

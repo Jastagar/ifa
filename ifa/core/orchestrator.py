@@ -30,7 +30,7 @@ from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
 from ifa.services.ollama_client import check_health
 from ifa.services.tts_service import TTSService
-from ifa.services.activation_server import ActivationService, start_activation_server
+from ifa.services.activation_server import start_activation_server
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import init_input
@@ -46,7 +46,6 @@ CONTACTS = {
     "john":"+918876700414",
 }
 
-executor = ThreadPoolExecutor(max_workers=2)
 
 def resume_reminders(tts: TTSService, db_path: str) -> None:
     """Re-arm any reminders persisted in SQLite. Called once at startup."""
@@ -126,13 +125,13 @@ def run() -> None:
 
     # 8. Main loop
     memory = Memory()
-    # memory.add(role="system",content=_build_system_prompt(nonce=f"TOOL_RESULT_{uuid.uuid4().hex[:12]}" ))
+
     def on_sentence(sentence: str):
         print(f"Ifa: {sentence}")
         speech_queue.enqueue(sentence)
 
     if os.environ.get("IFA_API_ENABLED", "1").lower() not in {"0", "false", "no", "off"}:
-        start_activation_server(ActivationService(ctx, memory, on_sentence), input_mode)
+        start_activation_server(input_mode)
 
     while True:
         user_input = input_mode.get().strip()
@@ -171,7 +170,7 @@ def run() -> None:
             except Exception:
                 traceback.print_exc()
 
-        reply = agent_future.result()
+        agent_future.result()
         # Arm the follow-up window: in voice mode, the next utterance
         # within ~5s skips the wake word; text mode is a no-op.
         input_mode.arm_followup()

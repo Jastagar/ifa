@@ -15,3 +15,6 @@ ifa/config/n8n_workflows.yaml
 .compound-engineering/
 .context/
 /memory.md
+# Runtime files with secrets / personal data — never commit.
+.cache
+PyWhatKit_DB.txt
