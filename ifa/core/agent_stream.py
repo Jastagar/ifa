@@ -5,7 +5,7 @@ import httpx
 
 from ifa.config.settings import OLLAMA_MODEL
 from ifa.core.context import AgentContext
-from ifa.core.memory import Memory
+from ifa.core.memory import Memory, tool_step
 from ifa.core.personality import persona, tool_framing
 from ifa.services.ollama_client import (
     build_tool_result_message,
@@ -45,6 +45,20 @@ TOOL_RESULT_MARKER = "TOOL_RESULT_"
 FABRICATION_CORRECTION = (
     "[Ifa system note, not from the user: you wrote a tool result yourself. Tool "
     "results only come from real tool calls. Call the tool instead of imitating it.]"
+)
+
+
+ACTION_CLAIM = re.compile(
+    r"^(?:(?:ok(?:ay)?|sure|alright|done|got it|sir|boss)[,!.\s]+)*(?:now\s+)?"
+    r"(?:playing|paused|pausing|skipping|skipped|resuming|resumed|opening|opened|launching|launched|"
+    r"starting|started|running|setting|sending|sent|switching|switched)\b"
+    r"|\b(?:is|'s|are)\s+(?:now\s+)?(?:playing|open|opened|paused|running)\b",
+    re.IGNORECASE,
+)
+ACTION_CLAIM_CORRECTION = (
+    "[Ifa system note, not from the user: you said you did something, but no tool was called "
+    "in this turn, so nothing happened. If Sir asked for an action, call the right tool now. "
+    "If he was only chatting, answer again without saying you did anything.]"
 )
 
 
@@ -102,7 +116,7 @@ def _notification_hint(ctx: AgentContext) -> str:
 def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce)},
-        *memory.get_recent(5),
+        *memory.recent(),
         {"role": "user", "content": _notification_hint(ctx) + user_text},
     ]
 
@@ -111,9 +125,12 @@ def _stream_assistant_message(
     messages: list[dict],
     allow_tools: bool,
     on_sentence,
+    guard_claims: bool = False,
 ) -> tuple[dict, list[str]]:
     full_text = ""
     fabricated = False
+    claimed = False
+    first_checked = not guard_claims
     sentence_buffer = ""
     speech_parts: list[str] = []
     tool_calls: list[dict] = []
@@ -138,9 +155,16 @@ def _stream_assistant_message(
         if fabricated or TOOL_RESULT_MARKER in full_text:
             fabricated = True
             continue
+        if claimed:
+            continue
         sentence_buffer += content
         completed, sentence_buffer = _extract_chunks(sentence_buffer)
         for sentence in completed:
+            if not first_checked:
+                first_checked = True
+                if ACTION_CLAIM.search(sentence):
+                    claimed = True
+                    break
             speech_parts.append(sentence)
             if (
                 len(speech_parts) >= SPEECH_BATCH_SENTENCES
@@ -148,13 +172,16 @@ def _stream_assistant_message(
             ):
                 _flush_speech_batch(speech_parts, on_sentence)
 
-    if sentence_buffer.strip() and not fabricated:
-        speech_parts.append(sentence_buffer.strip())
+    tail = sentence_buffer.strip()
+    if tail and not first_checked and ACTION_CLAIM.search(tail):
+        claimed = True
+    if tail and not fabricated and not claimed:
+        speech_parts.append(tail)
 
     timer.record_llm("llm", started_ms, first_chunk_ms, final_chunk, len(tool_calls))
     return (
         {"role": "assistant", "content": full_text, "tool_calls": tool_calls,
-         "fabricated": fabricated},
+         "fabricated": fabricated, "claimed": claimed and not tool_calls},
         speech_parts,
     )
 
@@ -195,11 +222,6 @@ def _direct_answer(results: list[tuple[str, str]]) -> str | None:
     return "\n".join(result for _, result in results)
 
 
-def _remember_turn(memory: Memory, user_text: str, assistant_text: str) -> None:
-    memory.add(role="user", content=user_text)
-    memory.add(role="assistant", content=assistant_text)
-
-
 def agent_turn_stream(
     user_text: str,
     ctx: AgentContext,
@@ -213,22 +235,34 @@ def agent_turn_stream(
     messages = _build_messages(user_text, ctx, memory, nonce)
     tool_hops = 0
     retries_remaining = 1
+    steps: list[dict] = []
 
     while True:
         allow_tools = tool_hops < MAX_TOOL_HOPS
         try:
             assistant_msg, pending_speech = _stream_assistant_message(
-                messages, allow_tools=allow_tools, on_sentence=on_sentence
+                messages, allow_tools=allow_tools, on_sentence=on_sentence,
+                guard_claims=allow_tools and tool_hops == 0,
             )
         except (KeyError, httpx.HTTPError):
             return "I hit a problem talking to the language model."
 
+        claimed = assistant_msg.pop("claimed")
         if assistant_msg.pop("fabricated"):
             if not retries_remaining:
                 return "I couldn't figure out how to do that."
             retries_remaining -= 1
             messages.append({"role": "user", "content": FABRICATION_CORRECTION})
             continue
+
+        if claimed:
+            print(f"[agent] reply claimed an action without a tool call: {assistant_msg['content'][:80]!r}")
+            if retries_remaining:
+                retries_remaining -= 1
+                messages.append({"role": "assistant", "content": assistant_msg["content"]})
+                messages.append({"role": "user", "content": ACTION_CLAIM_CORRECTION})
+                continue
+            pending_speech = [assistant_msg["content"]]
 
         tool_calls = assistant_msg["tool_calls"] if allow_tools else []
         if tool_calls:
@@ -252,15 +286,16 @@ def agent_turn_stream(
                 on_tool_calls([tc["function"]["name"] for tc in tool_calls])
             messages.append(assistant_msg)
             results = _append_tool_results(messages, tool_calls, ctx, nonce)
+            steps.extend(tool_step(assistant_msg, results))
             direct = _direct_answer(results)
             if direct is not None:
                 if on_sentence:
                     on_sentence(direct)
-                _remember_turn(memory, user_text, direct)
+                memory.add_turn(user_text, steps, direct)
                 return direct
             continue
 
         _flush_speech_batch(pending_speech, on_sentence)
         assistant_text = assistant_msg["content"]
-        _remember_turn(memory, user_text, assistant_text)
+        memory.add_turn(user_text, steps, assistant_text)
         return assistant_text

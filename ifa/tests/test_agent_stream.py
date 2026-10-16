@@ -283,3 +283,73 @@ class MalformedCallTests(AgentLoopTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActionClaimTests(AgentLoopTestCase):
+    def setUp(self):
+        super().setUp()
+        self.played = []
+        registry.register(_tool("spotify_control", lambda args, ctx: self.played.append(args) or "Playing Kesariya by Arijit Singh."))
+
+    def run_with(self, llm, text, memory, spoken):
+        with patch("ifa.core.agent_stream.stream_chat", side_effect=llm):
+            return agent_stream.agent_turn_stream(text, self.ctx, memory, on_sentence=spoken.append)
+
+    def test_claiming_an_action_without_a_tool_is_silenced_and_retried(self):
+        spoken = []
+        llm = ScriptedLLM(
+            _text("Playing Kesariya by Arijit Singh, Sir."),
+            _calls(("spotify_control", {"action": "play", "query": "kesariya"})),
+            _text("Kesariya's playing, Sir."),
+        )
+        reply = self.run_with(llm, "play kesariya", Memory(), spoken)
+        self.assertEqual(spoken, ["Kesariya's playing, Sir."])
+        self.assertEqual(reply, "Kesariya's playing, Sir.")
+        self.assertEqual(len(self.played), 1)
+        self.assertIn("no tool was called", llm.requests[1]["messages"][-1]["content"])
+
+    def test_after_the_tool_ran_the_confirmation_is_not_checked(self):
+        spoken = []
+        llm = ScriptedLLM(
+            _calls(("spotify_control", {"action": "play", "query": "kesariya"})),
+            _text("Playing Kesariya, Sir."),
+        )
+        self.run_with(llm, "play kesariya", Memory(), spoken)
+        self.assertEqual(spoken, ["Playing Kesariya, Sir."])
+        self.assertEqual(len(llm.requests), 2)
+
+    def test_chat_that_merely_looks_like_a_claim_is_spoken_after_one_retry(self):
+        spoken = []
+        llm = ScriptedLLM(_text("Running is great for your heart."), _text("Running is great for your heart."))
+        self.run_with(llm, "is running healthy?", Memory(), spoken)
+        self.assertEqual(spoken, ["Running is great for your heart."])
+
+    def test_ordinary_answers_pass_untouched(self):
+        spoken = []
+        llm = ScriptedLLM(_text("All good, Sir. How about you?"))
+        self.run_with(llm, "kya haal hai?", Memory(), spoken)
+        self.assertEqual(spoken, ["All good, Sir.", "How about you?"])
+        self.assertEqual(len(llm.requests), 1)
+
+
+class MemoryTests(AgentLoopTestCase):
+    def test_history_keeps_the_tool_calls_so_the_next_turn_sees_them(self):
+        registry.register(_tool("spotify_control", lambda args, ctx: "Playing Tum Hi Ho by Arijit Singh.\nextra detail"))
+        memory = Memory()
+        first = ScriptedLLM(_calls(("spotify_control", {"action": "play", "choice": 1})), _text("Playing it, Sir."))
+        with patch("ifa.core.agent_stream.stream_chat", side_effect=first):
+            agent_stream.agent_turn_stream("play tum hi ho", self.ctx, memory)
+        second = ScriptedLLM(_text("Hello."))
+        with patch("ifa.core.agent_stream.stream_chat", side_effect=second):
+            agent_stream.agent_turn_stream("hi", self.ctx, memory)
+        history = second.requests[0]["messages"][1:-1]
+        self.assertEqual([m["role"] for m in history], ["user", "assistant", "tool", "assistant"])
+        self.assertEqual(history[1]["tool_calls"][0]["function"]["name"], "spotify_control")
+        self.assertEqual(history[2]["content"], "Playing Tum Hi Ho by Arijit Singh.")
+        self.assertNotIn(agent_stream.TOOL_RESULT_MARKER, str(history))
+
+    def test_keeps_whole_recent_turns(self):
+        memory = Memory(max_turns=2)
+        for i in range(3):
+            memory.add_turn(f"q{i}", [], f"a{i}")
+        self.assertEqual([m["content"] for m in memory.recent()], ["q1", "a1", "q2", "a2"])
