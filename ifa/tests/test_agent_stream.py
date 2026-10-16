@@ -118,6 +118,20 @@ class MultiHopTests(AgentLoopTestCase):
         # Tools stay available while under budget.
         self.assertTrue(all(r["tools"] for r in llm.requests))
 
+    def test_tool_calls_are_announced_before_they_run(self):
+        """Lets the orchestrator play "Checking the time." while the tool runs."""
+        events = []
+        registry.register(_tool("get_time", lambda a, c: events.append("ran") or "3 PM"))
+        llm = ScriptedLLM(_calls(("get_time", {})), _text("It's 3 PM."))
+
+        with patch("ifa.core.agent_stream.stream_chat", side_effect=llm):
+            agent_stream.agent_turn_stream(
+                "time?", self.ctx, Memory(),
+                on_tool_calls=lambda names: events.append(("announced", names)),
+            )
+
+        self.assertEqual(events, [("announced", ["get_time"]), "ran"])
+
     def test_tool_error_is_fed_back_so_model_can_recover(self):
         attempts = []
 

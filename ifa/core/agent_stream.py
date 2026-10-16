@@ -188,6 +188,7 @@ def agent_turn_stream(
     ctx: AgentContext,
     memory: Memory,
     on_sentence=None,
+    on_tool_calls=None,
 ) -> str:
 
     """Run one user turn as a ReAct loop: think → act (tools) → observe → repeat.
@@ -229,6 +230,9 @@ def agent_turn_stream(
             if malformed_reasons:
                 return "I couldn't figure out how to do that."
             tool_hops += 1
+            if on_tool_calls:
+                # Tools mean at least one more LLM round before the answer.
+                on_tool_calls([tc["function"]["name"] for tc in tool_calls])
             messages.append(assistant_msg)
             _append_tool_results(messages, tool_calls, ctx, nonce)
             continue

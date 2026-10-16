@@ -11,7 +11,7 @@ IFA_VAD_SILENCE_MS of silence before it decides the user is done — so the
 wait shows up as its own line instead of being hidden.
 
 Headline metric: ``first_answer_audio`` — time to first speech (TTFS) of the
-actual answer. ``first_audio`` may be earlier when the acknowledgement plays.
+actual answer. ``first_audio`` may be earlier when a filler clip plays.
 
 Set IFA_LATENCY_LOG=path.jsonl to also append each turn as one JSON line,
 for p50/p90 over many turns.
@@ -36,7 +36,7 @@ class TurnTimer:
         self.marks: dict[str, int] = {}
         self.llm_calls: list[dict] = []
         self.tts_segments: list[dict] = []
-        self.ack_text: str | None = None
+        self.filler_text: str | None = None
         self._lock = threading.Lock()
 
     def now_ms(self) -> int:
@@ -77,7 +77,7 @@ class TurnTimer:
     def audio_started(self, text: str) -> None:
         """Called by the TTS player when an utterance's first samples hit the speaker."""
         self.mark("first_audio")
-        if text != self.ack_text:
+        if text != self.filler_text:
             self.mark("first_answer_audio")
 
     def summary(self) -> dict:
@@ -88,7 +88,7 @@ class TurnTimer:
                 "marks": dict(self.marks),
                 "llm_calls": list(self.llm_calls),
                 "tts_segments": list(self.tts_segments),
-                "ack_text": self.ack_text,
+                "filler_text": self.filler_text,
             }
 
     def report(self) -> None:
@@ -163,8 +163,8 @@ def _format(s: dict) -> str:
         if call["tool_calls"]:
             detail += f" · {call['tool_calls']} tool call(s)"
         row(f"{call['kind']} #{i} done", call["end"], detail)
-    if s["ack_text"] is not None:
-        row("ack spoken", m.get("ack_queued"), repr(s["ack_text"]))
+    if s["filler_text"] is not None:
+        row("filler", m.get("filler_queued"), repr(s["filler_text"]))
     row("first sentence", m.get("first_sentence"))
     if s["tts_segments"]:
         seg = s["tts_segments"][0]

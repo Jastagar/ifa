@@ -56,6 +56,9 @@ class TTSService:
             "IFA_VOICE_SAMPLE",
             "ifa/audios/voice.wav"
         )
+        # The producer thread and synthesize() callers (e.g. filler clips
+        # rendering at startup) must not run the model at the same time.
+        self._model_lock = threading.Lock()
 
         # Text generation and audio playback run independently. This lets the
         # GPU prepare the next sentence/phrase while the speaker is playing
@@ -100,6 +103,39 @@ class TTSService:
         if completed:
             completed.wait()
 
+    def synthesize(self, text: str) -> np.ndarray:
+        """Render `text` to audio without playing it (for pre-built clips)."""
+        return self._generate(text.strip())
+
+    def play_clip(self, audio: np.ndarray, label: str) -> threading.Event:
+        """Play pre-rendered audio, skipping synthesis entirely.
+
+        Goes straight onto the playback queue, so it starts as soon as the
+        speaker is free — ahead of any text still being synthesized.
+        """
+        with self._lock:
+            self._active_count += 1
+        completed = threading.Event()
+        self._audio_queue.put((audio, None, label))
+        self._audio_queue.put((None, completed, label))
+        return completed
+
+    def _generate(self, sentence: str) -> np.ndarray:
+        with self._model_lock:
+            with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    wav = self.model.generate(
+                        sentence,
+                        audio_prompt_path=self.voice_path
+                    )
+        return (
+            wav.squeeze()
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32)
+        )
+
     def _produce_audio(self) -> None:
         while True:
             text, completed = self._text_queue.get()
@@ -109,20 +145,7 @@ class TTSService:
                         break
 
                     synth_started = time.perf_counter()
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        with contextlib.redirect_stderr(io.StringIO()):
-                            wav = self.model.generate(
-                                sentence,
-                                audio_prompt_path=self.voice_path
-                            )
-
-                    audio = (
-                        wav.squeeze()
-                        .detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.float32)
-                    )
+                    audio = self._generate(sentence)
                     latency.current().record_tts(
                         chars=len(sentence),
                         synth_ms=round((time.perf_counter() - synth_started) * 1000),
@@ -163,7 +186,7 @@ class TTSService:
                             time.monotonic() + self._cooldown_sec,
                         )
                     if all_done:
-                        # The ack can drain the queue before the answer arrives,
+                        # A filler can drain the queue before the answer arrives,
                         # so keep the latest idle moment, not the first.
                         latency.current().mark("audio_done", last=True)
                     completed.set()

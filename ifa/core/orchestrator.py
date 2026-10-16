@@ -20,7 +20,6 @@ import sqlite3
 import sys
 import threading
 import time
-import traceback
 from ifa.core.agent_stream import (
     MODEL,
     agent_turn_stream,
@@ -28,6 +27,7 @@ from ifa.core.agent_stream import (
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
+from ifa.services.fillers import Fillers
 from ifa.services.ollama_client import check_health
 from ifa.services.tts_service import TTSService
 from ifa.services.activation_server import start_activation_server
@@ -38,7 +38,6 @@ from ifa.utils import latency
 from ifa.utils.speech_queue import SpeechQueue
 from concurrent.futures import ThreadPoolExecutor
 from ifa.skills.vibe.vibe import VibeManager
-from ifa.skills.acknowledgement.acknowledgement import AcknowledgementSkill
 
 
 N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflows.yaml"
@@ -46,6 +45,63 @@ N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflo
 CONTACTS = {
     "john":"+918876700414",
 }
+
+
+# How long silence may last before a filler clip covers it. Below ~600 ms a
+# pause still feels like natural turn-taking; much past ~800 ms it feels broken.
+FILLER_DELAY_SEC = int(os.environ.get("IFA_FILLER_DELAY_MS", "650")) / 1000
+
+
+def run_turn(
+    user_input: str,
+    ctx: AgentContext,
+    memory: Memory,
+    on_sentence,
+    fillers: Fillers,
+    executor: ThreadPoolExecutor,
+    filler_delay: float = FILLER_DELAY_SEC,
+) -> latency.TurnTimer:
+    """Run one agent turn, covering a slow answer with at most one filler clip.
+
+    The filler plays as soon as the model calls a tool (we know another LLM
+    round is coming) or once `filler_delay` passes with no answer sentence —
+    whichever comes first. It never plays once the answer has started.
+    """
+    timer = latency.claim_or_begin("text")
+    answer_started = threading.Event()
+    filler_played = False
+    # Makes "has the answer started?" + "queue speech" one atomic step, so a
+    # filler can never be queued after an answer sentence.
+    speech_order = threading.Lock()
+
+    def play_filler(tool_names: list[str] | None = None) -> None:
+        nonlocal filler_played
+        with speech_order:
+            if answer_started.is_set() or filler_played:
+                return
+            choice = fillers.choose(tool_names)
+            if choice is None:
+                return
+            phrase, audio = choice
+            filler_played = True
+            timer.filler_text = phrase  # set before playback so TTFS ignores it
+            timer.mark("filler_queued")
+            print(f"Ifa: ({phrase})")
+            ctx.tts.play_clip(audio, phrase)
+
+    def on_answer_sentence(sentence: str) -> None:
+        with speech_order:
+            timer.mark("first_sentence")
+            answer_started.set()
+            on_sentence(sentence)
+
+    agent_future = executor.submit(
+        agent_turn_stream, user_input, ctx, memory, on_answer_sentence, play_filler
+    )
+    if not answer_started.wait(timeout=filler_delay):
+        play_filler()
+    agent_future.result()
+    return timer
 
 
 def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
@@ -118,8 +174,9 @@ def run() -> None:
     speech_queue = SpeechQueue(
         handler=tts.enqueue
     )
-    executor = ThreadPoolExecutor(max_workers=2)
-    ack_skill = AcknowledgementSkill()
+    executor = ThreadPoolExecutor(max_workers=1)
+    fillers = Fillers(tts.synthesize)
+    fillers.prepare_in_background()
     ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
     register_all()
 
@@ -153,45 +210,7 @@ def run() -> None:
         if user_input.lower() in ["exit", "quit"]:
             break
 
-        timer = latency.claim_or_begin("text")
-        first_sentence_spoken = threading.Event()
-        # Makes "has the answer started?" + "queue the ack" one atomic step,
-        # so an ack can never be queued after an answer sentence.
-        speech_order = threading.Lock()
-
-        def streaming_callback(sentence: str):
-            with speech_order:
-                timer.mark("first_sentence")
-                first_sentence_spoken.set()
-                on_sentence(sentence)
-
-        ack_future = executor.submit(
-            ack_skill.generate,
-            user_input,
-        )
-
-        agent_future = executor.submit(
-            agent_turn_stream,
-            user_input,
-            ctx,
-            memory,
-            streaming_callback,
-        )
-        if not first_sentence_spoken.wait(timeout=0.2):
-            try:
-                acknowledgement = ack_future.result()
-                with speech_order:
-                    # With streaming, the answer can start while the ack is
-                    # still generating; a late ack would play after it.
-                    if not first_sentence_spoken.is_set():
-                        timer.ack_text = acknowledgement
-                        timer.mark("ack_queued")
-                        on_sentence(acknowledgement)
-
-            except Exception:
-                traceback.print_exc()
-
-        agent_future.result()
+        timer = run_turn(user_input, ctx, memory, on_sentence, fillers, executor)
         threading.Thread(
             target=_report_when_quiet, args=(timer, speech_queue, tts), daemon=True
         ).start()
