@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from ifa.core import orchestrator
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
-from ifa.services.fillers import Fillers
+from ifa.services.fillers import GENERIC, Fillers, generic_phrases
 
 
 def _ready_fillers(generic=("One moment.", "Let me see."), by_tool=None) -> Fillers:
@@ -51,6 +51,19 @@ class ChooseTests(unittest.TestCase):
         fillers = Fillers(synthesize, generic=["One moment.", "Let me see."], by_tool={})
         fillers.prepare_in_background().join()
         self.assertEqual(fillers.choose()[0], "Let me see.")
+
+
+class GenericPhraseTests(unittest.TestCase):
+    def test_generic_phrases_do_not_assume_what_was_asked(self):
+        for phrase in GENERIC:
+            for presumes in ("think", "on it", "sure", "check", "look", "opening", "got it"):
+                self.assertNotIn(presumes, phrase.lower(), phrase)
+
+    def test_env_overrides_the_list(self):
+        with patch.dict("os.environ", {"IFA_FILLER_PHRASES": " Hold on. | |One sec. "}):
+            self.assertEqual(generic_phrases(), ["Hold on.", "One sec."])
+        with patch.dict("os.environ", {"IFA_FILLER_PHRASES": " | "}):
+            self.assertEqual(generic_phrases(), GENERIC)
 
 
 class RunTurnFillerTests(unittest.TestCase):

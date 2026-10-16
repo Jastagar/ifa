@@ -75,7 +75,10 @@ SETTINGS = (
     Setting("IFA_VOICE_SAMPLE", "Voice sample", "speaking", "text", "ifa/audios/voice.wav",
             "WAV file Chatterbox clones Ifa's voice from."),
     Setting("IFA_FILLER_DELAY_MS", "Filler delay (ms)", "speaking", "number", "650",
-            "Silence before a filler like 'One moment.' plays.", minimum=0, maximum=5000),
+            "Silence before a filler like 'One sec.' plays.", minimum=0, maximum=5000),
+    Setting("IFA_FILLER_PHRASES", "Filler phrases", "speaking", "text", "",
+            "Phrases Ifa says while working, separated by |. Keep them true for any request, "
+            "e.g. One sec.|Just a sec. Empty uses the built-in list."),
     Setting("IFA_TTS_COOLDOWN_MS", "Echo cooldown (ms)", "speaking", "number", "500",
             "After Ifa speaks, ignore the mic this long so she doesn't hear herself.", minimum=0, maximum=5000),
 

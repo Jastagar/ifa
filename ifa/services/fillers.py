@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import os
 import random
 import threading
 
 import numpy as np
 
 GENERIC = [
+    "One sec.",
+    "Just a sec.",
     "One moment.",
-    "Let me see.",
-    "Hmm, let me think.",
-    "Okay, give me a second.",
-    "Sure, one sec.",
+    "Give me a second.",
 ]
 
 BY_TOOL = {
@@ -26,6 +26,11 @@ BY_TOOL = {
     "call_n8n_workflow": "Running that workflow.",
     "read_notifications": "Let me check.",
 }
+
+
+def generic_phrases() -> list[str]:
+    raw = os.environ.get("IFA_FILLER_PHRASES", "")
+    return [p.strip() for p in raw.split("|") if p.strip()] or list(GENERIC)
 
 
 class Fillers:

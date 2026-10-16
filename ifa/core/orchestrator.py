@@ -11,7 +11,7 @@ from ifa.core.agent_stream import (
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
-from ifa.services.fillers import Fillers
+from ifa.services.fillers import Fillers, generic_phrases
 from ifa.services.notifications import (
     URGENT_ANNOUNCEMENT,
     NotificationCenter,
@@ -151,7 +151,7 @@ def run() -> None:
         handler=tts.enqueue
     )
     executor = ThreadPoolExecutor(max_workers=1)
-    fillers = Fillers(tts.synthesize, extra=[URGENT_ANNOUNCEMENT])
+    fillers = Fillers(tts.synthesize, generic=generic_phrases(), extra=[URGENT_ANNOUNCEMENT])
     fillers.prepare_in_background()
     notifications = NotificationCenter(
         NotificationInbox(),
