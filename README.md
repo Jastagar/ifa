@@ -6,6 +6,25 @@ A bot that you can talk to as ask to do some stuff, there are probably 100s out 
 
 python 3.12.10
 
+## Launcher (settings + start/stop)
+
+The easiest way to configure and run Ifa:
+
+- **macOS**: double-click `run-launcher.command`
+- **Windows**: double-click `run-launcher.bat`
+- or: `python -m launcher` (add `--port 8790` / `--no-browser`)
+
+It opens a local page where you can:
+
+- see the detected OS, CUDA GPU, Python venv, and whether Ollama and your model are available
+- edit every setting (model, GPU/CPU per component, voice, notifications, keys) with validation; saves go to `.env`
+- add any other environment variable the agent should get
+- launch / stop Ifa and watch its output; in text mode, type to Ifa from the page
+
+Adding a new setting means adding one `Setting(...)` line to `launcher/settings_schema.py`; the page builds itself from that list. The launcher only listens on `127.0.0.1` and never sends secret values back to the browser.
+
+The launcher starts Ifa with `venv`'s Python, so run `run.command` / `run.bat` once first to create the venv and install dependencies.
+
 ## Running Ifa
 
 ### Easy way — double-click

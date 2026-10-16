@@ -1,3 +1,5 @@
+import os
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
@@ -6,10 +8,15 @@ class SpotifySkill:
     def __init__(self, tts):
         self.tts = tts
 
+        client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise RuntimeError("Spotify keys are not set (SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET)")
+
         self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id="697e9ce952f04a3fb027fc65d675f859",
-            client_secret="fe03d76048374d04993038139dd405f5",
-            redirect_uri="http://127.0.0.1:8888/callback",
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=os.environ.get("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback"),
             scope="user-modify-playback-state user-read-playback-state"
         ))
 

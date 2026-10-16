@@ -5,6 +5,8 @@ from typing import Optional
 
 import numpy as np
 
+from ifa.utils.devices import resolve_device
+
 
 _model: Optional[object] = None
 _processor: Optional[object] = None
@@ -25,11 +27,7 @@ def _get_model():
             "Oriserve/Whisper-Hindi2Hinglish-Swift",
         )
 
-        device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "cpu"
-        )
+        device = resolve_device("IFA_WHISPER_DEVICE")
 
         dtype = (
             torch.float16

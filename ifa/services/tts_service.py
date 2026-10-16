@@ -14,6 +14,7 @@ from blingfire import text_to_sentences
 from rich.console import Console
 
 from ifa.utils import latency
+from ifa.utils.devices import resolve_device
 
 _console = Console()
 
@@ -29,11 +30,7 @@ class TTSService:
 
         self._stop_event = threading.Event()
 
-        self.device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "cpu"
-        )
+        self.device = resolve_device("IFA_TTS_DEVICE")
 
 
         _console.print("PROCESSOR TYPE :",torch.cuda.is_available())

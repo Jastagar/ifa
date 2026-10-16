@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ifa Launcher</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e3e2dd;
+  --accent: #2f6f5e; --accent-text: #ffffff; --danger: #b3392f; --warn: #9a6a00; --ok: #2f7a3f;
+  --input: #fbfbfa; --console: #141413; --console-text: #e9e8e3; --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121211; --panel: #1b1b1a; --text: #ecebe6; --muted: #9a9993; --line: #2e2e2b;
+    --accent: #5fb39a; --accent-text: #0e1a16; --danger: #e0786d; --warn: #e2b048; --ok: #74c487;
+    --input: #222220; --console: #0b0b0a; --console-text: #e2e1dc;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0 8px 0 0; letter-spacing: .2px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--line); color: var(--muted); }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.running { color: var(--ok); } .pill.running i { background: var(--ok); }
+.pill.exited { color: var(--danger); } .pill.exited i { background: var(--danger); }
+.spacer { flex: 1; }
+button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  padding: 7px 14px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--danger); }
+button.small { padding: 3px 9px; font-size: 12px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 32px; } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.col.sticky { position: sticky; top: 72px; align-self: start; }
+@media (max-width: 900px) { .col.sticky { position: static; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.card > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.card > h2 .count { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.body { padding: 4px 16px 12px; }
+.field { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 4px 14px; padding: 10px 0;
+  border-bottom: 1px solid var(--line); align-items: start; }
+.field:last-child { border-bottom: 0; }
+@media (max-width: 560px) { .field { grid-template-columns: minmax(0, 1fr); } }
+.field label { font-weight: 550; padding-top: 6px; overflow-wrap: anywhere; }
+.field .key { display: block; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); font-weight: 400; }
+.field .help { grid-column: 2; color: var(--muted); font-size: 12px; }
+@media (max-width: 560px) { .field .help { grid-column: 1; } }
+.field.changed label::after { content: " •"; color: var(--accent); }
+.field .err { grid-column: 2; color: var(--danger); font-size: 12px; }
+.control { display: flex; gap: 8px; align-items: center; min-width: 0; }
+input[type=text], input[type=password], input[type=number], select {
+  width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 9px; }
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: .15s; cursor: pointer; }
+.switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .15s; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::before { transform: translateX(16px); }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; padding: 12px 16px; }
+.facts dt { color: var(--muted); } .facts dd { margin: 0; overflow-wrap: anywhere; }
+.ok { color: var(--ok); } .bad { color: var(--danger); } .warn { color: var(--warn); }
+.banner { margin: 0 20px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn);
+  display: none; gap: 10px; align-items: center; max-width: 1360px; }
+.banner.show { display: flex; } .banner.error { border-color: var(--danger); color: var(--danger); }
+#console { background: var(--console); color: var(--console-text); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  height: min(62vh, 640px); overflow: auto; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+  border-radius: 0 0 var(--radius) var(--radius); }
+#console .sys { color: #8fb8a9; }
+#console:empty::before { content: "Ifa isn't running. Press Launch to start it; its output appears here."; color: #8a8984; }
+.say { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.custom-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; padding: 8px 0; align-items: center; }
+.custom-row code { font-size: 12px; overflow-wrap: anywhere; }
+nav.groups { display: flex; gap: 6px; flex-wrap: wrap; }
+nav.groups a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
+nav.groups a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ifa</h1>
+  <span id="status" class="pill"><i></i><b>…</b></span>
+  <span class="spacer"></span>
+  <span id="dirty" class="pill" hidden></span>
+  <button id="save" disabled>Save</button>
+  <button id="launch" class="primary">Launch</button>
+  <button id="stop" class="danger" disabled>Stop</button>
+</header>
+<div id="banner" class="banner"></div>
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>Environment <button id="recheck" class="small count">Re-check</button></h2>
+      <dl class="facts" id="facts"><dt>Checking…</dt><dd></dd></dl>
+    </section>
+    <nav class="groups" id="nav"></nav>
+    <div id="groups" class="col"></div>
+    <section class="card" id="custom-card">
+      <h2>Other environment variables</h2>
+      <div class="body">
+        <p class="help" style="color:var(--muted);font-size:12px;margin:8px 0">
+          Extra variables passed to the agent. Values are never shown here; type a new value to replace one.</p>
+        <div id="custom"></div>
+        <div class="custom-row">
+          <input id="new-key" type="text" placeholder="NEW_VARIABLE" autocomplete="off" spellcheck="false">
+          <input id="new-value" type="password" placeholder="value" autocomplete="off">
+          <button id="add-custom" class="small">Add</button>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="col sticky">
+    <section class="card">
+      <h2>Console <button id="clear-console" class="small count">Clear</button></h2>
+      <div id="console" role="log" aria-live="polite"></div>
+      <form class="say" id="say">
+        <input id="say-text" type="text" placeholder="Type to Ifa (text mode)" autocomplete="off" disabled>
+        <button id="say-send" disabled>Send</button>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+const TOKEN = "__LAUNCHER_TOKEN__";
+const $ = (id) => document.getElementById(id);
+const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null };
+
+async function api(path, body) {
+  const opts = { headers: { "X-Launcher-Token": TOKEN } };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const err = new Error(data.error || res.statusText); err.fields = data.fields; throw err; }
+  return data;
+}
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined) node.append(c);
+  return node;
+}
+
+function banner(text, kind = "warn", action) {
+  const b = $("banner");
+  b.className = "banner" + (text ? " show" : "") + (kind === "error" ? " error" : "");
+  b.replaceChildren(text ? el("span", {}, text) : "", action || "");
+}
+
+function settingValue(s) {
+  if (s.key in state.edits) return state.edits[s.key];
+  return s.kind === "secret" ? null : s.value;
+}
+
+function markDirty() {
+  const n = Object.keys(state.edits).length + Object.keys(state.custom).length;
+  $("save").disabled = n === 0;
+  $("dirty").hidden = n === 0;
+  $("dirty").textContent = `${n} unsaved`;
+}
+
+function edit(s, value, field) {
+  const original = s.kind === "secret" ? null : s.value;
+  if (value === original) delete state.edits[s.key]; else state.edits[s.key] = value;
+  field.classList.toggle("changed", s.key in state.edits);
+  delete state.errors[s.key];
+  field.querySelector(".err")?.remove();
+  markDirty();
+  if (s.group === "hardware" || s.key === "IFA_OLLAMA_MODEL") renderFacts();
+}
+
+function renderField(s) {
+  const field = el("div", { class: "field" + (s.key in state.edits ? " changed" : ""), id: "f-" + s.key });
+  const id = "i-" + s.key;
+  let control;
+  const current = settingValue(s);
+  if (s.kind === "bool") {
+    const on = (current === "" ? s.default : current).trim().toLowerCase();
+    const input = el("input", { type: "checkbox", id, checked: ["1", "true", "yes", "on"].includes(on) });
+    input.addEventListener("change", () => edit(s, input.checked ? "1" : "0", field));
+    control = el("div", { class: "control" }, el("label", { class: "switch" }, input, el("span")));
+  } else if (s.kind === "select") {
+    const select = el("select", { id },
+      el("option", { value: "" }, `default (${s.default})`),
+      s.options.map((o) => el("option", { value: o, selected: o === current }, o)));
+    select.addEventListener("change", () => edit(s, select.value, field));
+    control = el("div", { class: "control" }, select);
+  } else if (s.kind === "secret") {
+    const input = el("input", { type: "password", id, autocomplete: "off",
+      placeholder: s.is_set ? "Saved. Type to replace" : "Not set", value: state.edits[s.key] || "" });
+    input.addEventListener("input", () => edit(s, input.value === "" ? null : input.value, field));
+    const clear = el("button", { class: "small", type: "button", disabled: !s.is_set,
+      onclick: () => { input.value = ""; input.placeholder = "Will be cleared on save"; edit(s, "", field); } }, "Clear");
+    control = el("div", { class: "control" }, input, clear);
+  } else {
+    const attrs = { type: s.kind === "number" ? "number" : "text", id, value: current, placeholder: s.default || "",
+      autocomplete: "off", spellcheck: "false" };
+    if (s.kind === "number") { attrs.step = "any"; attrs.min = s.minimum ?? undefined; attrs.max = s.maximum ?? undefined; }
+    if (s.key === "IFA_OLLAMA_MODEL") attrs.list = "ollama-models";
+    const input = el("input", attrs);
+    input.addEventListener("input", () => edit(s, input.value, field));
+    control = el("div", { class: "control" }, input);
+  }
+  field.append(el("label", { for: id }, s.label, el("span", { class: "key" }, s.key)), control);
+  if (s.help) field.append(el("div", { class: "help" }, s.help));
+  if (state.errors[s.key]) field.append(el("div", { class: "err" }, state.errors[s.key]));
+  return field;
+}
+
+function renderSettings() {
+  const groups = $("groups"), nav = $("nav");
+  groups.replaceChildren(); nav.replaceChildren();
+  for (const g of state.schema.groups) {
+    g.settings.forEach((s) => (s.group = g.id));
+    nav.append(el("a", { href: "#g-" + g.id }, g.label));
+    groups.append(el("section", { class: "card", id: "g-" + g.id },
+      el("h2", {}, g.label), el("div", { class: "body" }, g.settings.map(renderField))));
+  }
+  const custom = $("custom");
+  custom.replaceChildren(...state.schema.custom_keys.filter((k) => state.custom[k] !== null).map((k) => {
+    const input = el("input", { type: "password", placeholder: "Saved. Type to replace", autocomplete: "off",
+      value: state.custom[k] || "" });
+    input.addEventListener("input", () => { if (input.value) state.custom[k] = input.value; else delete state.custom[k]; markDirty(); });
+    return el("div", { class: "custom-row" }, el("code", {}, k), input,
+      el("button", { class: "small danger", type: "button", onclick: () => { state.custom[k] = null; markDirty(); renderSettings(); } }, "Remove"));
+  }));
+  for (const [k, v] of Object.entries(state.custom)) {
+    if (state.schema.custom_keys.includes(k) && v !== null) continue;
+    custom.append(el("div", { class: "custom-row" }, el("code", {}, k),
+      el("span", { class: v === null ? "bad" : "warn" }, v === null ? "will be removed" : "will be added"),
+      el("button", { class: "small", type: "button", onclick: () => { delete state.custom[k]; markDirty(); renderSettings(); } }, "Undo")));
+  }
+  markDirty();
+}
+
+function fieldValue(key) {
+  for (const g of state.schema.groups) for (const s of g.settings) if (s.key === key) {
+    const v = settingValue(s);
+    return v === "" || v === null ? s.default : v;
+  }
+  return "";
+}
+
+function renderFacts() {
+  const c = state.checks;
+  if (!c) return;
+  const sys = c.system, ol = c.ollama;
+  const facts = $("facts");
+  const row = (k, ...v) => [el("dt", {}, k), el("dd", {}, ...v)];
+  const gpu = sys.cuda_gpus.length ? el("span", { class: "ok" }, sys.cuda_gpus.join(", "))
+    : el("span", { class: "warn" }, sys.apple_silicon ? "Apple Silicon (no CUDA; models run on CPU)" : "No CUDA GPU found");
+  const deviceNotes = ["IFA_WHISPER_DEVICE", "IFA_TTS_DEVICE"].filter((k) => fieldValue(k) === "cuda" && !sys.cuda_gpus.length);
+  const model = fieldValue("IFA_OLLAMA_MODEL");
+  let modelState;
+  if (!model) modelState = el("span", { class: "bad" }, "not set");
+  else if (!ol.ok) modelState = el("span", { class: "warn" }, "can't check (Ollama unreachable)");
+  else if (ol.models.some((m) => m === model || m === model + ":latest")) modelState = el("span", { class: "ok" }, `${model} is installed`);
+  else modelState = el("span", { class: "bad" }, `${model} is not pulled (run: ollama pull ${model})`);
+  facts.replaceChildren(
+    ...row("System", `${sys.os} ${sys.os_version} · ${sys.arch}`),
+    ...row("GPU", gpu, deviceNotes.length ? el("div", { class: "warn" }, `cuda selected for ${deviceNotes.join(", ")} but no CUDA GPU: will fall back to CPU`) : null),
+    ...row("Agent Python", sys.agent_python ? el("span", { class: "ok" }, sys.agent_python)
+      : el("span", { class: "bad" }, "no venv found. Run run.command / run.bat once to create it")),
+    ...row("Ollama", ol.ok ? el("span", { class: "ok" }, `reachable at ${ol.url} · ${ol.models.length} model(s)`)
+      : el("span", { class: "bad" }, `not reachable at ${ol.url} (${ol.error})`)),
+    ...row("Model", modelState),
+    ...row(".env", c.env_file ? "found" : el("span", { class: "warn" }, "will be created on save")));
+  let list = $("ollama-models");
+  if (!list) { list = el("datalist", { id: "ollama-models" }); document.body.append(list); }
+  list.replaceChildren(...ol.models.map((m) => el("option", { value: m })));
+}
+
+async function loadChecks() {
+  try { state.checks = await api("/api/checks"); renderFacts(); }
+  catch (e) { banner("Couldn't run checks: " + e.message, "error"); }
+}
+
+async function loadSettings() {
+  state.schema = await api("/api/settings");
+  renderSettings();
+}
+
+async function save() {
+  $("save").disabled = true;
+  try {
+    const result = await api("/api/settings", { values: state.edits, custom: state.custom });
+    state.schema = result; state.edits = {}; state.custom = {}; state.errors = {};
+    renderSettings(); loadChecks();
+    if (result.restart_needed) banner("Saved. Restart the agent to apply the new settings.", "warn",
+      el("button", { class: "small", onclick: restart }, "Restart now"));
+    else banner("");
+    return true;
+  } catch (e) {
+    state.errors = e.fields || {};
+    renderSettings();
+    banner(e.fields ? "Some settings are invalid. Fix the highlighted fields." : "Save failed: " + e.message, "error");
+    const first = Object.keys(state.errors)[0];
+    if (first) $("f-" + first)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    markDirty();
+    return false;
+  }
+}
+
+async function launch() {
+  if (Object.keys(state.edits).length + Object.keys(state.custom).length && !(await save())) return;
+  if (!fieldValue("IFA_OLLAMA_MODEL")) { banner("Set the model (Language model → Model) before launching.", "error"); return; }
+  $("launch").disabled = true;
+  try { await api("/api/agent/start", {}); banner(""); }
+  catch (e) { banner("Launch failed: " + e.message, "error"); }
+  pollLogs();
+}
+
+async function stop() {
+  $("stop").disabled = true;
+  try { await api("/api/agent/stop", {}); } catch (e) { banner("Stop failed: " + e.message, "error"); }
+  pollLogs();
+}
+
+async function restart() { banner(""); await stop(); await launch(); }
+
+function setStatus(s) {
+  state.status = s.state;
+  const pill = $("status");
+  pill.className = "pill " + s.state;
+  pill.querySelector("b").textContent = s.state === "running" ? `Running · pid ${s.pid}`
+    : s.state === "exited" ? `Exited (code ${s.exit_code})` : "Stopped";
+  const running = s.state === "running";
+  $("launch").disabled = running;
+  $("stop").disabled = !running;
+  $("say-text").disabled = !running;
+  $("say-send").disabled = !running;
+}
+
+async function pollLogs() {
+  try {
+    const data = await api(`/api/logs?after=${state.lastLog}`);
+    const con = $("console");
+    const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
+    for (const line of data.lines) {
+      con.append(el("div", { class: line.text.startsWith("[launcher]") ? "sys" : "" }, line.text || " "));
+    }
+    while (con.childElementCount > 3000) con.firstElementChild.remove();
+    if (data.lines.length && atBottom) con.scrollTop = con.scrollHeight;
+    state.lastLog = data.last;
+    setStatus(data);
+  } catch (e) { /* server restarting or closed */ }
+}
+
+$("save").addEventListener("click", save);
+$("launch").addEventListener("click", launch);
+$("stop").addEventListener("click", stop);
+$("recheck").addEventListener("click", loadChecks);
+$("clear-console").addEventListener("click", () => $("console").replaceChildren());
+$("add-custom").addEventListener("click", () => {
+  const key = $("new-key").value.trim().toUpperCase(), value = $("new-value").value;
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) { banner("Variable names use UPPER_CASE letters, digits and _.", "error"); return; }
+  state.custom[key] = value; $("new-key").value = ""; $("new-value").value = "";
+  banner(""); renderSettings();
+});
+$("say").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = $("say-text").value.trim();
+  if (!text) return;
+  $("say-text").value = "";
+  try { await api("/api/agent/input", { text }); } catch (e) { banner("Couldn't send: " + e.message, "error"); }
+});
+window.addEventListener("beforeunload", (ev) => {
+  if (Object.keys(state.edits).length + Object.keys(state.custom).length) { ev.preventDefault(); ev.returnValue = ""; }
+});
+
+loadSettings().then(loadChecks).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
+pollLogs();
+setInterval(pollLogs, 800);
+</script>
+</body>
+</html>
