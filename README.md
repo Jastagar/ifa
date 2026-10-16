@@ -26,6 +26,15 @@ Adding a new setting means adding one `Setting(...)` line to `launcher/settings_
 
 The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launcher with any Python 3.10+ and press **Run missing steps**. The page only sends step names; the commands themselves are defined in `launcher/setup_steps.py`.
 
+## Testing phone notifications
+
+With Ifa running, send fake notifications to its local API (`POST /activate` on port 8787):
+
+- **Windows**: `scripts\notify-test.bat [scenario]`
+- **macOS**: `scripts/notify-test.sh [scenario]`
+
+Scenarios: `single` (default: a WhatsApp message from Joe), `burst` (four broken messages from one sender, grouped into one and rated urgent), `urgent` (announced right away), `low` (stored, never announced), `email` (normal priority), `all`. The scripts read `IFA_API_PORT` and `IFA_API_TOKEN` from `.env`.
+
 ## Running Ifa
 
 ### Easy way — double-click
