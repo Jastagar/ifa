@@ -61,21 +61,21 @@ if errorlevel 1 (
 )
 
 REM -------- 3. Ollama configuration --------
-REM Run Ifa's Ollama instance on a dedicated port so it does not
-REM conflict with another Ollama instance using the default 11434.
-set "OLLAMA_HOST=127.0.0.1:11435"
+REM Ifa uses a single model on a single Ollama instance: the default port,
+REM which is what MAIN_OLLAMA_URL points at. run.ps1 / run.command match.
+set "OLLAMA_HOST=127.0.0.1:11434"
 
 REM -------- 4. Ollama running? --------
-curl -s -m 3 http://127.0.0.1:11435/api/tags >nul 2>&1
+curl -s -m 3 http://127.0.0.1:11434/api/tags >nul 2>&1
 if errorlevel 1 (
     echo [setup] Ollama is not running on %OLLAMA_HOST%. Starting it in the background...
-    start "Ollama - Ifa" /MIN cmd /c "set OLLAMA_HOST=127.0.0.1:11435 && ollama serve"
+    start "Ollama - Ifa" /MIN cmd /c "set OLLAMA_HOST=127.0.0.1:11434 && ollama serve"
 
     set /a _tries=0
     :wait_ollama
     timeout /t 1 /nobreak >nul
 
-    curl -s -m 2 http://127.0.0.1:11435/api/tags >nul 2>&1
+    curl -s -m 2 http://127.0.0.1:11434/api/tags >nul 2>&1
     if not errorlevel 1 goto :ollama_ok
 
     set /a _tries+=1
