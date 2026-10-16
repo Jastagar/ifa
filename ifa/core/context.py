@@ -7,7 +7,12 @@ singletons, the orchestrator constructs this once and passes it to every
 """
 from dataclasses import dataclass, field
 
+from typing import TYPE_CHECKING
+
 from ifa.services.tts_service import TTSService
+
+if TYPE_CHECKING:
+    from ifa.services.notifications import NotificationCenter
 
 
 @dataclass
@@ -16,3 +21,4 @@ class AgentContext:
     db_path: str
     n8n_config: dict = field(default_factory=dict)
     contacts: dict = field(default_factory=dict)
+    notifications: "NotificationCenter | None" = None

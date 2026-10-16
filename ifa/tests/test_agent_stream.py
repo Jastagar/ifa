@@ -192,6 +192,68 @@ class ToolProtocolTests(AgentLoopTestCase):
         self.assertIn(nonce, system_prompt)
 
 
+class TerminalToolTests(AgentLoopTestCase):
+    """return_direct tools: their result is the spoken answer, no second LLM round."""
+
+    def _terminal(self, name, handler):
+        tool = _tool(name, handler)
+        tool.return_direct = True
+        return tool
+
+    def test_terminal_tool_result_is_spoken_without_another_llm_call(self):
+        registry.register(self._terminal("read_notifications", lambda a, c: "Joe wants to know if you're free tonight."))
+        spoken = []
+        llm = ScriptedLLM(_calls(("read_notifications", {})))  # only one reply scripted
+
+        result = self.run_turn(llm, "What is it?", spoken=spoken)
+
+        self.assertEqual(result, "Joe wants to know if you're free tonight.")
+        self.assertEqual(spoken, ["Joe wants to know if you're free tonight."])
+        self.assertEqual(len(llm.requests), 1)
+
+    def test_terminal_tool_error_goes_back_to_the_model(self):
+        registry.register(self._terminal("read_notifications", lambda a, c: 1 / 0))
+        llm = ScriptedLLM(_calls(("read_notifications", {})), _text("I couldn't read them."))
+
+        self.assertEqual(self.run_turn(llm), "I couldn't read them.")
+        self.assertEqual(len(llm.requests), 2)
+
+    def test_mixed_with_a_normal_tool_uses_the_normal_flow(self):
+        registry.register(self._terminal("read_notifications", lambda a, c: "summary"))
+        registry.register(_tool("get_time", lambda a, c: "3 PM"))
+        llm = ScriptedLLM(_calls(("read_notifications", {}), ("get_time", {})), _text("Both done."))
+
+        self.assertEqual(self.run_turn(llm), "Both done.")
+
+
+class FabricatedToolResultTests(AgentLoopTestCase):
+    """A model that types out a fake tool result must never be read aloud."""
+
+    FAKE = [
+        {"message": {"content": "I'll check. "}},
+        {"message": {"content": "<TOOL"}},  # marker split across chunks
+        {"message": {"content": "_RESULT_abc_START tool=read_notifications>Report due at 5 PM. "}},
+        {"message": {"content": "Joe says hi.<TOOL_RESULT_abc_END>"}},
+    ]
+
+    def test_fake_result_is_not_spoken_and_model_is_asked_for_a_real_call(self):
+        registry.register(_tool("read_notifications", lambda a, c: "Joe wants to know if you're free."))
+        spoken = []
+        llm = ScriptedLLM(self.FAKE, _calls(("read_notifications", {})), _text("Joe wants to know if you're free."))
+
+        result = self.run_turn(llm, "What is it?", spoken=spoken)
+
+        self.assertEqual(result, "Joe wants to know if you're free.")
+        self.assertEqual(spoken, ["I'll check.", "Joe wants to know if you're free."])
+        retry_request = llm.requests[1]["messages"]
+        self.assertIn("you wrote a tool result yourself", retry_request[-1]["content"])
+        self.assertFalse(any("Report due" in (m.get("content") or "") for m in retry_request))
+
+    def test_gives_up_after_a_second_fabrication(self):
+        llm = ScriptedLLM(self.FAKE, self.FAKE)
+        self.assertEqual(self.run_turn(llm), "I couldn't figure out how to do that.")
+
+
 class BudgetTests(AgentLoopTestCase):
     def test_final_hop_withholds_tools_so_model_must_answer(self):
         """A model stuck calling tools is forced to answer, not cut off."""

@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def start_activation_server(
-    input_mode,
+    notifications,
     host: str | None = None,
     port: int | None = None,
     token: str | None = None,
@@ -56,12 +56,10 @@ def start_activation_server(
                     raise ValueError("request body is too large")
 
                 payload = json.loads(self.rfile.read(content_length))
+                if not isinstance(payload, dict):
+                    raise ValueError("request body must be a JSON object")
 
-                context = payload.get("context")
-
-                input_mode._listener.start_listening_from_api(
-                    api_context=json.dumps(context, ensure_ascii=False)
-                )
+                notifications.receive(payload)
 
             except (ValueError, json.JSONDecodeError) as exc:
                 print(exc)

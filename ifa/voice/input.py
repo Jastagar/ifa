@@ -31,7 +31,7 @@ import os
 import queue
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from ifa.services.tts_service import TTSService
 from ifa.utils import latency
@@ -76,7 +76,12 @@ class VoiceInput(_InputMode):
     word again.
     """
 
-    def __init__(self, tts_service: TTSService) -> None:
+    def __init__(
+        self,
+        tts_service: TTSService,
+        notifications=None,
+        announce_urgent: Optional[Callable[[], None]] = None,
+    ) -> None:
         # Imports are lazy so text-mode users don't pay the voice dep cost.
         import sounddevice as sd
 
@@ -86,6 +91,12 @@ class VoiceInput(_InputMode):
         from ifa.voice.wake_word import WAKE_CHUNK_SAMPLES, WakeWordListener
 
         self._tts = tts_service  # stored so capture can wait on is_speaking
+        self._notifications = notifications
+        self._announce_urgent = announce_urgent
+        # How long to listen (no wake word) after announcing a notification.
+        self._notification_listen_sec = float(
+            os.environ.get("IFA_NOTIF_LISTEN_SEC", "8")
+        )
         self._listener = WakeWordListener(tts_service=tts_service)
         self._capture_utterance = capture_utterance
         self._play_listening_cue = play_listening_cue
@@ -173,6 +184,12 @@ class VoiceInput(_InputMode):
         return time.monotonic() < self._followup_until
 
     # -- internals --
+
+    def _notification_waiting(self) -> bool:
+        return (
+            self._notifications is not None
+            and self._notifications.announcement_ready.is_set()
+        )
 
     def _wait_for_tts_silence(self) -> bool:
         """Block (in 50 ms slices) until ``tts.is_speaking`` is False.
@@ -276,17 +293,36 @@ class VoiceInput(_InputMode):
             # Clear the arm now so a failed/empty follow-up doesn't bleed
             # into subsequent iterations.
             self._followup_until = 0.0
+            # Checked only here, between exchanges, so a notification never
+            # cuts into a conversation: it waits until the current one ends.
+            announcement = (
+                self._notifications.take_announcement() if self._notifications else None
+            )
             try:
-                if not in_followup:
+                play_cue = True
+                if announcement:
+                    if not self._wait_for_tts_silence():
+                        return
+                    print(f"[voice] notification ({announcement}) — listening without wake word...")
+                    if announcement == "urgent" and self._announce_urgent:
+                        self._announce_urgent()
+                    capture_kwargs = {
+                        "start_timeout_ms": int(self._notification_listen_sec * 1000)
+                    }
+                elif not in_followup:
                     print("[voice] waiting for wake word...")
-                    self._listener.wait_for_wake(
-                        read_chunk=self._read_wake_chunk
+                    score = self._listener.wait_for_wake(
+                        read_chunk=self._read_wake_chunk,
+                        interrupt=self._notification_waiting,
                     )
                     if self._stop.is_set():
                         return
+                    if score is None:
+                        continue  # a notification arrived; handle it at the top
                     print("[voice] wake detected — capturing...")
                     capture_kwargs = {}
                 else:
+                    play_cue = False
                     print(
                         f"[voice] follow-up ({self._followup_window_sec:g}s) "
                         "— listening without wake word..."
@@ -303,10 +339,10 @@ class VoiceInput(_InputMode):
                 # self-feedback chat loop.
                 if not self._wait_for_tts_silence():
                     return
-                # Acknowledge an actual wake-word detection, but keep the
+                # Acknowledge a wake word or notification, but keep the
                 # conversational follow-up window silent. The cue is played
                 # before draining so it cannot be captured as user speech.
-                if not in_followup:
+                if play_cue:
                     self._play_listening_cue()
                 # Discard whatever the OS buffered during TTS / cooldown.
                 self._drain_stream()
@@ -338,18 +374,6 @@ class VoiceInput(_InputMode):
 
                 transcribedText = self._transcribe(audio)
                 timer.mark("stt_done")
-                if self._listener._api_context:
-                    text = f"""
-Based on this mobile notification's data context:
->>>
-{self._listener._api_context}
->>>
-reply to the following: 
-{transcribedText}
-"""
-                    self._listener.clear_api_context()
-                else:
-                    text = transcribedText
 
             except BaseException as exc:
                 # BaseException catches test sentinels (which inherit from it)
@@ -371,11 +395,15 @@ reply to the following:
                 print("[voice] (no speech detected / empty transcript)")
                 continue
             print(f"[voice] heard: {transcribedText!r}")
-            self._queue.put(text)
+            self._queue.put(transcribedText)
             needs_turn_wait = True
 
 
-def init_input(tts_service: TTSService) -> _InputMode:
+def init_input(
+    tts_service: TTSService,
+    notifications=None,
+    announce_urgent: Optional[Callable[[], None]] = None,
+) -> _InputMode:
     """Return an ``_InputMode`` object based on ``IFA_MODE``.
 
     Called once at orchestrator startup. In voice mode, spins up
@@ -393,7 +421,11 @@ def init_input(tts_service: TTSService) -> _InputMode:
         return _TextMode()
 
     try:
-        voice = VoiceInput(tts_service=tts_service)
+        voice = VoiceInput(
+            tts_service=tts_service,
+            notifications=notifications,
+            announce_urgent=announce_urgent,
+        )
         voice.start()
     except Exception as exc:
         print(

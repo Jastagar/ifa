@@ -46,8 +46,15 @@ def _build_system_prompt(nonce: str) -> str:
         )
     return "\n\n".join(parts)
 
+TOOL_RESULT_MARKER = "TOOL_RESULT_"
+FABRICATION_CORRECTION = (
+    "[Ifa system note, not from the user: you wrote a tool result yourself. Tool "
+    "results only come from real tool calls. Call the tool instead of imitating it.]"
+)
+
+
 def _new_nonce() -> str:
-    return f"TOOL_RESULT_{uuid.uuid4().hex[:12]}"
+    return f"{TOOL_RESULT_MARKER}{uuid.uuid4().hex[:12]}"
 
 
 def _extract_chunks(buffer: str):
@@ -91,11 +98,27 @@ def _flush_speech_batch(parts: list[str], on_sentence) -> None:
     parts.clear()
 
 
-def _build_messages(user_text: str, memory: Memory, nonce: str) -> list[dict]:
+def _notification_hint(ctx: AgentContext) -> str:
+    """A count of unread notifications, so "what is it?" has something to refer to.
+
+    Only the count — no sender or text. Notification content is untrusted
+    and reaches the model solely through the read_notifications tool.
+    """
+    unread = ctx.notifications.inbox.unread_count() if ctx.notifications else 0
+    if not unread:
+        return ""
+    return (
+        f"[Ifa system note, not from the user: {unread} unread phone notification(s) "
+        "arrived recently. If the user asks about them (e.g. 'what is it?'), call "
+        "read_notifications to get them. Never guess what they say.]\n"
+    )
+
+
+def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce)},
         *memory.get_recent(5),
-        {"role": "user", "content": user_text},
+        {"role": "user", "content": _notification_hint(ctx) + user_text},
     ]
 
 
@@ -104,8 +127,15 @@ def _stream_assistant_message(
     allow_tools: bool,
     on_sentence,
 ) -> tuple[dict, list[str]]:
-    """Stream one assistant response and emit full phrase batches early."""
+    """Stream one assistant response and emit full phrase batches early.
+
+    If the text starts imitating a tool result (it contains the tool-result
+    marker), speech stops at once and the message comes back flagged
+    ``fabricated``: real tool results only ever come from the loop, so that
+    content is invented and must never be read out.
+    """
     full_text = ""
+    fabricated = False
     sentence_buffer = ""
     speech_parts: list[str] = []
     tool_calls: list[dict] = []
@@ -127,6 +157,9 @@ def _stream_assistant_message(
             continue
 
         full_text += content
+        if fabricated or TOOL_RESULT_MARKER in full_text:
+            fabricated = True
+            continue
         sentence_buffer += content
         completed, sentence_buffer = _extract_chunks(sentence_buffer)
         for sentence in completed:
@@ -137,12 +170,13 @@ def _stream_assistant_message(
             ):
                 _flush_speech_batch(speech_parts, on_sentence)
 
-    if sentence_buffer.strip():
+    if sentence_buffer.strip() and not fabricated:
         speech_parts.append(sentence_buffer.strip())
 
     timer.record_llm("llm", started_ms, first_chunk_ms, final_chunk, len(tool_calls))
     return (
-        {"role": "assistant", "content": full_text, "tool_calls": tool_calls},
+        {"role": "assistant", "content": full_text, "tool_calls": tool_calls,
+         "fabricated": fabricated},
         speech_parts,
     )
 
@@ -160,22 +194,35 @@ def _tool_call_errors(tool_calls: list[dict]) -> list[str]:
 
 def _append_tool_results(
     messages: list[dict], tool_calls: list[dict], ctx: AgentContext, nonce: str
-) -> None:
+) -> list[tuple[str, str]]:
     """Dispatch every tool call and append one delimited result per call.
 
     Every call gets a result, even when an earlier one failed: the assistant
     message we just appended promised N calls, so the model must see N
     results. Errors are results too — the model reads them on the next hop
-    and can retry or explain.
+    and can retry or explain. Returns (tool name, raw result) per call.
     """
+    results = []
     for tool_call in tool_calls:
         function = tool_call["function"]
         name = function["name"]
         result = registry.dispatch(name, function["arguments"], ctx)
+        results.append((name, result))
         messages.append(build_tool_result_message(
             tool_name=name,
             content=registry.delimit_as_data(nonce, name, result),
         ))
+    return results
+
+
+def _direct_answer(results: list[tuple[str, str]]) -> str | None:
+    """The spoken answer if every tool called was a terminal tool and succeeded."""
+    tools = [registry.get(name) for name, _ in results]
+    if not all(tool is not None and tool.return_direct for tool in tools):
+        return None
+    if any(result.startswith("ERROR") for _, result in results):
+        return None  # let the model see the error and recover
+    return "\n".join(result for _, result in results)
 
 
 def _remember_turn(memory: Memory, user_text: str, assistant_text: str) -> None:
@@ -199,7 +246,7 @@ def agent_turn_stream(
     than the loop giving up.
     """
     nonce = _new_nonce()
-    messages = _build_messages(user_text, memory, nonce)
+    messages = _build_messages(user_text, ctx, memory, nonce)
     tool_hops = 0
     retries_remaining = 1
 
@@ -211,6 +258,14 @@ def agent_turn_stream(
             )
         except (KeyError, httpx.HTTPError):
             return "I hit a problem talking to the language model."
+
+        if assistant_msg.pop("fabricated"):
+            # Don't keep the invented text in the history; ask for a real call.
+            if not retries_remaining:
+                return "I couldn't figure out how to do that."
+            retries_remaining -= 1
+            messages.append({"role": "user", "content": FABRICATION_CORRECTION})
+            continue
 
         tool_calls = assistant_msg["tool_calls"] if allow_tools else []
         if tool_calls:
@@ -234,7 +289,13 @@ def agent_turn_stream(
                 # Tools mean at least one more LLM round before the answer.
                 on_tool_calls([tc["function"]["name"] for tc in tool_calls])
             messages.append(assistant_msg)
-            _append_tool_results(messages, tool_calls, ctx, nonce)
+            results = _append_tool_results(messages, tool_calls, ctx, nonce)
+            direct = _direct_answer(results)
+            if direct is not None:
+                if on_sentence:
+                    on_sentence(direct)
+                _remember_turn(memory, user_text, direct)
+                return direct
             continue
 
         _flush_speech_batch(pending_speech, on_sentence)

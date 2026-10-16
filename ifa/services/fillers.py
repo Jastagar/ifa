@@ -37,14 +37,16 @@ BY_TOOL = {
     "switch_mode": "Switching modes.",
     "whats_app": "Sending that over.",
     "call_n8n_workflow": "Running that workflow.",
+    "read_notifications": "Let me check.",
 }
 
 
 class Fillers:
-    def __init__(self, synthesize, generic=GENERIC, by_tool=BY_TOOL, rng=None) -> None:
+    def __init__(self, synthesize, generic=GENERIC, by_tool=BY_TOOL, extra=(), rng=None) -> None:
         self._synthesize = synthesize
         self._generic = list(generic)
         self._by_tool = dict(by_tool)
+        self._extra = list(extra)  # other fixed lines, e.g. the urgent-notification announcement
         self._rng = rng or random.Random()
         self._clips: dict[str, np.ndarray] = {}
         self._lock = threading.Lock()
@@ -57,8 +59,9 @@ class Fillers:
         return thread
 
     def _prepare_all(self) -> None:
-        # Generic first: they cover every slow turn, tool phrases only some.
-        for phrase in [*self._generic, *self._by_tool.values()]:
+        # Extra lines first (announcements), then generic fillers (they cover
+        # every slow turn), then tool phrases (they cover only some).
+        for phrase in [*self._extra, *self._generic, *self._by_tool.values()]:
             try:
                 audio = self._synthesize(phrase)
             except Exception as exc:
@@ -66,6 +69,11 @@ class Fillers:
                 continue
             with self._lock:
                 self._clips[phrase] = audio
+
+    def clip(self, phrase: str) -> np.ndarray | None:
+        """The rendered audio for a fixed phrase, or None if it isn't ready."""
+        with self._lock:
+            return self._clips.get(phrase)
 
     def choose(self, tool_names: list[str] | None = None) -> tuple[str, np.ndarray] | None:
         """Pick a ready clip: tool-specific if one matches, else a generic one.

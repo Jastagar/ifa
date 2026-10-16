@@ -151,7 +151,6 @@ class WakeWordListener:
         # clone with corrupted blob, etc.) — without it, the listener
         # would try to download_models() with the path string as a name
         # and crash with a confusing error.
-        self._api_context_recieved = False
         raw_spec = model_spec or _resolve_model_spec()
         self._fallback_from: Optional[str] = None
         if _is_path_spec(raw_spec) and not os.path.exists(raw_spec):
@@ -217,18 +216,16 @@ class WakeWordListener:
         """
         return self._fallback_from
 
-    def start_listening_from_api(self, api_context):
-        self._api_context_recieved = True
-        self._api_context = api_context
-    
-    def clear_api_context(self):
-        self._api_context = None
-        
     def wait_for_wake(
         self,
         read_chunk: Callable[[], np.ndarray],
-    ) -> float:
+        interrupt: Optional[Callable[[], bool]] = None,
+    ) -> Optional[float]:
         """Block until a wake-word detection; return the detection score.
+
+        If ``interrupt`` is given and returns True (checked once per 80 ms
+        frame), stop waiting and return None — e.g. a phone notification
+        wants Ifa to listen without the wake word.
 
         ``read_chunk`` must return a 1D numpy array of ``WAKE_CHUNK_SAMPLES``
         samples of 16 kHz mono audio. float32 (``[-1.0, 1.0]``) or int16
@@ -262,19 +259,15 @@ class WakeWordListener:
                 self._model.predict(silence)
                 consecutive = 0
                 continue
+            if interrupt is not None and interrupt():
+                self._model.reset()
+                return None
             chunk_i16 = _to_int16(chunk)
             scores = self._model.predict(chunk_i16)
             score = float(scores.get(self._score_key, 0.0))
-            if self._api_context_recieved:
-                self._api_context_recieved = False
-                self._model.reset()
-                last_score = score
-                return 1
             if score >= self._threshold:
                 consecutive += 1
                 last_score = score
-                self._api_context_recieved = False
-                self.clear_api_context()
                 if consecutive >= self._consecutive_required:
                     self._model.reset()
                     return last_score

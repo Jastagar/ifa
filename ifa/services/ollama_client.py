@@ -72,11 +72,14 @@ def chat(
     timeout: float = DEFAULT_TIMEOUT,
     think: bool = OLLAMA_THINK,
     images: list[Image.Image] | None = None,
+    format: dict | None = None,
 ) -> dict:
     """
     POST to /api/chat and return the parsed response.
 
     If `images` is supplied, they are attached to the last user message.
+    If `format` (a JSON Schema) is supplied, Ollama constrains decoding so
+    the reply is JSON matching it — structured output, no parsing guesswork.
     """
 
     # Don't mutate the caller's messages
@@ -111,6 +114,8 @@ def chat(
 
     if tools is not None:
         payload["tools"] = tools
+    if format is not None:
+        payload["format"] = format
 
     response = httpx.post(
         f"{MAIN_OLLAMA_URL}/api/chat",

@@ -24,6 +24,10 @@ class Tool:
     description: str
     parameters: dict  # JSON Schema
     handler: Callable[[dict, AgentContext], str]
+    # Terminal tool: its result is spoken as the final answer instead of
+    # going back to the model to be rephrased. For outputs whose exact
+    # form matters more than the model's wording.
+    return_direct: bool = False
 
 
 _TOOLS: dict[str, Tool] = {}

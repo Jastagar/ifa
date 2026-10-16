@@ -28,12 +28,19 @@ from ifa.core.context import AgentContext
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
 from ifa.services.fillers import Fillers
-from ifa.services.ollama_client import check_health
+from ifa.services.notifications import (
+    URGENT_ANNOUNCEMENT,
+    NotificationCenter,
+    NotificationInbox,
+    classify_urgency,
+    summarize_bursts,
+)
+from ifa.services.ollama_client import chat, check_health
 from ifa.services.tts_service import TTSService
 from ifa.services.activation_server import start_activation_server
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
-from ifa.voice.input import init_input
+from ifa.voice.input import VoiceInput, init_input
 from ifa.utils import latency
 from ifa.utils.speech_queue import SpeechQueue
 from concurrent.futures import ThreadPoolExecutor
@@ -175,16 +182,43 @@ def run() -> None:
         handler=tts.enqueue
     )
     executor = ThreadPoolExecutor(max_workers=1)
-    fillers = Fillers(tts.synthesize)
+    fillers = Fillers(tts.synthesize, extra=[URGENT_ANNOUNCEMENT])
     fillers.prepare_in_background()
-    ctx = AgentContext(tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS)
+    notifications = NotificationCenter(
+        NotificationInbox(),
+        classify=lambda burst: classify_urgency(burst, chat, MODEL),
+        summarize=lambda bursts: summarize_bursts(bursts, chat, MODEL),
+    )
+    ctx = AgentContext(
+        tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS,
+        notifications=notifications,
+    )
     register_all()
 
     # 6. Restore reminders BEFORE entering the main loop
     resume_reminders(tts, DB_PATH)
 
     # 7. Initialize input mode (text default; IFA_MODE=voice opts in)
-    input_mode = init_input(tts)
+    def announce_urgent() -> None:
+        """Say the urgent line (pre-rendered if ready) and wait until it's spoken."""
+        audio = fillers.clip(URGENT_ANNOUNCEMENT)
+        if audio is not None:
+            done = tts.play_clip(audio, URGENT_ANNOUNCEMENT)
+        else:
+            done = tts.enqueue(URGENT_ANNOUNCEMENT)
+        if done:
+            done.wait()
+
+    input_mode = init_input(tts, notifications, announce_urgent)
+    if not isinstance(input_mode, VoiceInput):
+        # Text mode has no voice loop polling for announcements: announce directly.
+        def announce_in_text_mode(level: str) -> None:
+            print("\n🔔 New notification. Ask 'what is it?' to hear it.")
+            if level == "urgent":
+                announce_urgent()
+
+        notifications.on_announce = announce_in_text_mode
+    notifications.start()
 
     # getting vibes ready:
     VibeManager(tts)
@@ -197,7 +231,7 @@ def run() -> None:
         speech_queue.enqueue(sentence)
 
     if os.environ.get("IFA_API_ENABLED", "1").lower() not in {"0", "false", "no", "off"}:
-        start_activation_server(input_mode)
+        start_activation_server(notifications)
 
     while True:
         user_input = input_mode.get().strip()
