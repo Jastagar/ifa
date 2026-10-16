@@ -10,6 +10,7 @@ from pathlib import Path
 from launcher import env_file
 from launcher.agent_process import AgentProcess
 from launcher.server import Launcher, SettingsError, serve
+from launcher.setup_steps import SetupRunner, Step, installed_version, plan
 from launcher.settings_schema import BY_KEY, SETTINGS, normalize
 
 from dotenv import dotenv_values
@@ -219,6 +220,71 @@ class AgentProcessTests(unittest.TestCase):
         self.addCleanup(agent.stop)
         self.assertTrue(self.wait_for(agent, "red"))
         self.assertFalse(any("\x1b" in line["text"] for line in agent.logs_after(0)[0]))
+
+
+class SetupTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+
+    def test_plan_before_venv_blocks_everything_that_needs_it(self):
+        steps = {s.id: s for s in plan(self.root, {"MAIN_OLLAMA_URL": "http://127.0.0.1:9"}, "")}
+        self.assertFalse(steps["venv"].done)
+        self.assertIsNone(steps["venv"].blocked)
+        for sid in ("requirements", "speech", "voice_models"):
+            self.assertTrue(steps[sid].blocked)
+        self.assertIn("Set the model", steps["ollama_pull"].blocked)
+        self.assertNotIn("torch_cuda", steps) if sys.platform == "darwin" else None
+
+    def test_remote_ollama_is_not_started_locally(self):
+        steps = {s.id: s for s in plan(self.root, {"MAIN_OLLAMA_URL": "http://10.255.255.1:11434"}, "")}
+        if not steps["ollama_start"].done:
+            self.assertIn("another machine", steps["ollama_start"].blocked)
+        self.assertEqual(steps["ollama_pull"].env["OLLAMA_HOST"], "10.255.255.1:11434")
+
+    def test_installed_version_reads_dist_info(self):
+        site = self.root / "venv" / "lib" / "python3.12" / "site-packages"
+        (site / "torch-2.6.0+cu124.dist-info").mkdir(parents=True)
+        self.assertEqual(installed_version(self.root, "torch"), "2.6.0+cu124")
+        self.assertIsNone(installed_version(self.root, "torchaudio"))
+
+    def run_plan(self, steps, ids, only_missing=False):
+        agent = AgentProcess([], cwd=str(self.root), name="setup")
+        runner = SetupRunner(self.root, agent, lambda: steps)
+        runner.run(ids, only_missing)
+        deadline = time.time() + 10
+        while runner.status()["running"] and time.time() < deadline:
+            time.sleep(0.05)
+        return [line["text"] for line in agent.logs_after(0)[0]]
+
+    def test_runs_in_order_skips_done_and_stops_on_failure(self):
+        ok = lambda sid: Step(sid, sid, "", [sys.executable, "-c", f"print('ran {sid}')"])
+        steps = [ok("a"), Step("b", "b", "", [sys.executable, "-c", "x"], done=True),
+                 Step("c", "c", "", [sys.executable, "-c", "raise SystemExit(3)"]), ok("d")]
+        out = "\n".join(self.run_plan(steps, ["a", "b", "c", "d"], only_missing=True))
+        self.assertIn("ran a", out)
+        self.assertNotIn("$ " + sys.executable + " -c x", out)
+        self.assertIn("c failed (exit code 3)", out)
+        self.assertNotIn("ran d", out)
+
+    def test_blocked_step_stops_the_run(self):
+        steps = [Step("a", "a", "", ["x"], blocked="needs b"), Step("b", "b", "", [sys.executable, "-c", "print('ran b')"])]
+        out = "\n".join(self.run_plan(steps, ["a", "b"]))
+        self.assertIn("needs b", out)
+        self.assertNotIn("ran b", out)
+
+    def test_rejects_unknown_steps(self):
+        runner = SetupRunner(self.root, AgentProcess([], cwd=str(self.root)), lambda: [Step("a", "a", "", ["x"])])
+        with self.assertRaises(ValueError):
+            runner.run(["rm -rf /"], False)
+
+    def test_setup_and_agent_exclude_each_other(self):
+        launcher = Launcher(self.root, agent=AgentProcess([sys.executable, "-c", "import time; time.sleep(5)"], cwd=str(self.root)))
+        launcher.agent.start()
+        self.addCleanup(launcher.agent.stop)
+        with self.assertRaises(RuntimeError):
+            launcher.run_setup({"steps": ["venv"]})
 
 
 if __name__ == "__main__":

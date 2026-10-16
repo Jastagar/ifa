@@ -77,13 +77,25 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
   height: min(62vh, 640px); overflow: auto; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere;
   border-radius: 0 0 var(--radius) var(--radius); }
 #console .sys { color: #8fb8a9; }
-#console:empty::before { content: "Ifa isn't running. Press Launch to start it; its output appears here."; color: #8a8984; }
+#console:empty::before { content: "Setup and agent output appears here. Run the Setup steps once, then press Launch."; color: #8a8984; }
 .say { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .custom-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; padding: 8px 0; align-items: center; }
 .custom-row code { font-size: 12px; overflow-wrap: anywhere; }
 nav.groups { display: flex; gap: 6px; flex-wrap: wrap; }
 nav.groups a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
 nav.groups a:hover { color: var(--text); }
+.steps { list-style: none; margin: 0; padding: 4px 16px 12px; }
+.step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 2px 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--line); align-items: start; }
+.step:last-child { border-bottom: 0; }
+.step .mark { font-weight: 700; padding-top: 1px; text-align: center; }
+.step .title { font-weight: 550; }
+.step .note { grid-column: 2 / 4; color: var(--muted); font-size: 12px; }
+.step .cmd { grid-column: 2 / 4; display: flex; gap: 6px; align-items: center; min-width: 0; }
+.step code { flex: 1; min-width: 0; font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--input);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; overflow-x: auto; white-space: nowrap; }
+.step.active { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 8%, transparent)); }
+.setup-actions { margin-left: auto; display: flex; gap: 6px; text-transform: none; letter-spacing: 0; }
 </style>
 </head>
 <body>
@@ -102,6 +114,12 @@ nav.groups a:hover { color: var(--text); }
     <section class="card">
       <h2>Environment <button id="recheck" class="small count">Re-check</button></h2>
       <dl class="facts" id="facts"><dt>Checking…</dt><dd></dd></dl>
+    </section>
+    <section class="card" id="setup-card">
+      <h2>Setup <span class="setup-actions">
+        <button id="setup-missing" class="small primary">Run missing steps</button>
+        <button id="setup-stop" class="small danger" hidden>Stop</button></span></h2>
+      <ol class="steps" id="steps"><li class="note" style="padding:8px 0;color:var(--muted)">Checking…</li></ol>
     </section>
     <nav class="groups" id="nav"></nav>
     <div id="groups" class="col"></div>
@@ -133,7 +151,8 @@ nav.groups a:hover { color: var(--text); }
 <script>
 const TOKEN = "__LAUNCHER_TOKEN__";
 const $ = (id) => document.getElementById(id);
-const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null };
+const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null,
+  setup: null, setupRunning: false };
 
 async function api(path, body) {
   const opts = { headers: { "X-Launcher-Token": TOKEN } };
@@ -278,7 +297,7 @@ function renderFacts() {
     ...row("System", `${sys.os} ${sys.os_version} · ${sys.arch}`),
     ...row("GPU", gpu, deviceNotes.length ? el("div", { class: "warn" }, `cuda selected for ${deviceNotes.join(", ")} but no CUDA GPU: will fall back to CPU`) : null),
     ...row("Agent Python", sys.agent_python ? el("span", { class: "ok" }, sys.agent_python)
-      : el("span", { class: "bad" }, "no venv found. Run run.command / run.bat once to create it")),
+      : el("span", { class: "bad" }, "no venv yet. Run the Setup steps")),
     ...row("Ollama", ol.ok ? el("span", { class: "ok" }, `reachable at ${ol.url} · ${ol.models.length} model(s)`)
       : el("span", { class: "bad" }, `not reachable at ${ol.url} (${ol.error})`)),
     ...row("Model", modelState),
@@ -286,6 +305,47 @@ function renderFacts() {
   let list = $("ollama-models");
   if (!list) { list = el("datalist", { id: "ollama-models" }); document.body.append(list); }
   list.replaceChildren(...ol.models.map((m) => el("option", { value: m })));
+}
+
+function renderSetup() {
+  const data = state.setup;
+  if (!data) return;
+  const running = state.setupRunning, agentUp = state.status === "running";
+  const missing = data.steps.filter((s) => !s.done);
+  $("setup-missing").disabled = running || agentUp || !missing.length;
+  $("setup-missing").textContent = missing.length ? "Run missing steps" : "All set";
+  $("setup-stop").hidden = !running;
+  $("steps").replaceChildren(...data.steps.map((s) => {
+    const active = running && data.step === s.id;
+    const [mark, cls, tip] = active ? ["…", "warn", "running"] : s.done === true ? ["✓", "ok", "done"]
+      : s.blocked ? ["–", "", "blocked"] : s.done === false ? ["○", "bad", "missing"] : ["↻", "", "safe to re-run"];
+    const copy = el("button", { class: "small", type: "button", onclick: async () => {
+      try { await navigator.clipboard.writeText(s.command); copy.textContent = "Copied"; }
+      catch { copy.textContent = "Select it"; }
+      setTimeout(() => (copy.textContent = "Copy"), 1200);
+    } }, "Copy");
+    const run = s.done && !s.rerun ? el("span") : el("button", { class: "small", type: "button",
+      disabled: running || agentUp || !!s.blocked, title: agentUp ? "Stop the agent first" : s.blocked || "",
+      onclick: () => runSetup([s.id], false) }, s.done ? "Re-run" : "Run");
+    return el("li", { class: "step" + (active ? " active" : "") },
+      el("span", { class: "mark " + cls, title: tip }, mark), el("span", { class: "title" }, s.label), run,
+      el("div", { class: "note" }, s.blocked ? el("span", { class: "warn" }, s.blocked) : s.help),
+      s.command ? el("div", { class: "cmd" }, el("code", {}, s.command), copy) : null);
+  }));
+}
+
+async function loadSetup() {
+  try { state.setup = await api("/api/setup"); state.setupRunning = state.setup.running; renderSetup(); }
+  catch (e) { banner("Couldn't load setup steps: " + e.message, "error"); }
+}
+
+async function runSetup(ids, onlyMissing) {
+  if (Object.keys(state.edits).length + Object.keys(state.custom).length && !(await save())) return;
+  try {
+    await api("/api/setup/run", { steps: ids, only_missing: onlyMissing });
+    state.setupRunning = true; state.setup.step = ids[0]; renderSetup(); banner("");
+  } catch (e) { banner("Setup failed to start: " + e.message, "error"); }
+  pollLogs();
 }
 
 async function loadChecks() {
@@ -343,7 +403,14 @@ function setStatus(s) {
   pill.querySelector("b").textContent = s.state === "running" ? `Running · pid ${s.pid}`
     : s.state === "exited" ? `Exited (code ${s.exit_code})` : "Stopped";
   const running = s.state === "running";
-  $("launch").disabled = running;
+  const setupRunning = !!(s.setup && s.setup.running);
+  if (state.setup) {
+    const finished = state.setupRunning && !setupRunning;
+    const changed = setupRunning !== state.setupRunning || s.setup.step !== state.setup.step || running !== state.agentWasRunning;
+    state.setupRunning = setupRunning; state.setup.step = s.setup.step; state.agentWasRunning = running;
+    if (finished) { loadSetup(); loadChecks(); } else if (changed) renderSetup();
+  }
+  $("launch").disabled = running || setupRunning;
   $("stop").disabled = !running;
   $("say-text").disabled = !running;
   $("say-send").disabled = !running;
@@ -367,7 +434,9 @@ async function pollLogs() {
 $("save").addEventListener("click", save);
 $("launch").addEventListener("click", launch);
 $("stop").addEventListener("click", stop);
-$("recheck").addEventListener("click", loadChecks);
+$("recheck").addEventListener("click", () => { loadChecks(); loadSetup(); });
+$("setup-missing").addEventListener("click", () => runSetup(state.setup.steps.filter((s) => !s.done).map((s) => s.id), true));
+$("setup-stop").addEventListener("click", async () => { try { await api("/api/setup/stop", {}); } catch (e) { banner(e.message, "error"); } });
 $("clear-console").addEventListener("click", () => $("console").replaceChildren());
 $("add-custom").addEventListener("click", () => {
   const key = $("new-key").value.trim().toUpperCase(), value = $("new-value").value;
@@ -386,7 +455,7 @@ window.addEventListener("beforeunload", (ev) => {
   if (Object.keys(state.edits).length + Object.keys(state.custom).length) { ev.preventDefault(); ev.returnValue = ""; }
 });
 
-loadSettings().then(loadChecks).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
+loadSettings().then(() => Promise.all([loadChecks(), loadSetup()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
 pollLogs();
 setInterval(pollLogs, 800);
 </script>

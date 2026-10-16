@@ -12,22 +12,46 @@ from collections import deque
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
-class AgentProcess:
-    def __init__(self, argv: list[str], cwd: str, max_lines: int = 3000) -> None:
-        self.argv = argv
-        self.cwd = cwd
+class LogBuffer:
+    def __init__(self, max_lines: int = 3000) -> None:
         self._lock = threading.Lock()
-        self._proc: subprocess.Popen | None = None
         self._lines: deque[tuple[int, str]] = deque(maxlen=max_lines)
         self._seq = 0
+
+    def append(self, text: str) -> None:
+        with self._lock:
+            self._seq += 1
+            self._lines.append((self._seq, ANSI.sub("", text)))
+
+    def after(self, seq: int) -> tuple[list[dict], int]:
+        with self._lock:
+            return [{"seq": s, "text": t} for s, t in self._lines if s > seq], self._seq
+
+
+class AgentProcess:
+    def __init__(self, argv: list[str], cwd: str, log: LogBuffer | None = None, name: str = "agent") -> None:
+        self.argv = argv
+        self.cwd = cwd
+        self.name = name
+        self.log = log or LogBuffer()
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
         self._started_at: float | None = None
 
-    def start(self, clear_env: set[str] | frozenset[str] = frozenset()) -> None:
+    def start(
+        self,
+        clear_env: set[str] | frozenset[str] = frozenset(),
+        argv: list[str] | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
-                raise RuntimeError("the agent is already running")
+                raise RuntimeError(f"the {self.name} is already running")
+            if argv is not None:
+                self.argv = argv
             env = {k: v for k, v in os.environ.items() if k not in clear_env}
             env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONPATH=self.cwd)
+            env.update(extra_env or {})
             kwargs: dict = {}
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -60,7 +84,7 @@ class AgentProcess:
         with self._lock:
             proc = self._proc
         if proc is None or proc.poll() is not None or proc.stdin is None:
-            raise RuntimeError("the agent is not running")
+            raise RuntimeError(f"the {self.name} is not running")
         proc.stdin.write(line.rstrip("\r\n") + "\n")
         proc.stdin.flush()
 
@@ -75,22 +99,29 @@ class AgentProcess:
                 "started_at": self._started_at if running else None,
             }
 
-    def logs_after(self, seq: int) -> tuple[list[dict], int]:
+    def wait(self) -> int | None:
         with self._lock:
-            lines = [{"seq": s, "text": t} for s, t in self._lines if s > seq]
-            return lines, self._seq
+            proc = self._proc
+        return None if proc is None else proc.wait()
+
+    def logs_after(self, seq: int) -> tuple[list[dict], int]:
+        return self.log.after(seq)
 
     def _append(self, text: str) -> None:
-        with self._lock:
-            self._seq += 1
-            self._lines.append((self._seq, ANSI.sub("", text)))
+        self.log.append(text)
 
     def _pump(self, proc: subprocess.Popen) -> None:
         assert proc.stdout is not None
         for line in proc.stdout:
             self._append(line.rstrip("\r\n"))
         code = proc.wait()
-        self._append(f"[launcher] agent exited with code {code}")
+        for pipe in (proc.stdin, proc.stdout):
+            try:
+                if pipe:
+                    pipe.close()
+            except OSError:
+                pass
+        self._append(f"[launcher] {self.name} exited with code {code}")
 
     @staticmethod
     def _signal(proc: subprocess.Popen, kill: bool) -> None:

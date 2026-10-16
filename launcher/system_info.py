@@ -16,7 +16,7 @@ def venv_python(repo_root: Path) -> Path | None:
     return next((p for p in candidates if p.exists()), None)
 
 
-def _nvidia_gpus() -> list[str]:
+def nvidia_gpus() -> list[str]:
     if not shutil.which("nvidia-smi"):
         return []
     try:
@@ -31,7 +31,7 @@ def _nvidia_gpus() -> list[str]:
 
 def detect_system(repo_root: Path) -> dict:
     system = platform.system()
-    gpus = _nvidia_gpus()
+    gpus = nvidia_gpus()
     apple_silicon = system == "Darwin" and platform.machine() == "arm64"
     python = venv_python(repo_root)
     return {

@@ -17,13 +17,14 @@ The easiest way to configure and run Ifa:
 It opens a local page where you can:
 
 - see the detected OS, CUDA GPU, Python venv, and whether Ollama and your model are available
+- set up the environment from the **Setup** list: create the venv, install packages (plus the CUDA build of PyTorch when an NVIDIA GPU is found), install and start Ollama, pull the model, download the voice models. Each step shows its exact command (copy it to run it yourself), whether it's already done, and a Run button; **Run missing steps** does them in order and stops at the first failure
 - edit every setting (model, GPU/CPU per component, voice, notifications, keys) with validation; saves go to `.env`
 - add any other environment variable the agent should get
 - launch / stop Ifa and watch its output; in text mode, type to Ifa from the page
 
 Adding a new setting means adding one `Setting(...)` line to `launcher/settings_schema.py`; the page builds itself from that list. The launcher only listens on `127.0.0.1` and never sends secret values back to the browser.
 
-The launcher starts Ifa with `venv`'s Python, so run `run.command` / `run.bat` once first to create the venv and install dependencies.
+The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launcher with any Python 3.10+ and press **Run missing steps**. The page only sends step names; the commands themselves are defined in `launcher/setup_steps.py`.
 
 ## Running Ifa
 

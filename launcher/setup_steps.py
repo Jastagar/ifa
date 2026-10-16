@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlparse
+
+from launcher.agent_process import AgentProcess
+from launcher.system_info import check_ollama, nvidia_gpus, venv_python
+
+TORCH_VERSION = "2.6.0"
+TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu124"
+SPEECH_PACKAGES = ["chatterbox-tts==0.1.7", "blingfire", "mss", "Pillow", "spotipy", "pywhatkit"]
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+@dataclass(frozen=True)
+class Step:
+    id: str
+    label: str
+    help: str
+    argv: list[str] = field(default_factory=list)
+    done: bool | None = None
+    blocked: str | None = None
+    detached: bool = False
+    rerun: bool = True
+    env: dict[str, str] = field(default_factory=dict)
+
+
+def _site_packages(repo_root: Path) -> list[Path]:
+    venv = repo_root / "venv"
+    return [venv / "Lib" / "site-packages", *sorted((venv / "lib").glob("python*/site-packages"))]
+
+
+def installed_version(repo_root: Path, dist: str) -> str | None:
+    prefix = dist.lower().replace("-", "_") + "-"
+    for site in _site_packages(repo_root):
+        if not site.is_dir():
+            continue
+        for entry in site.iterdir():
+            name = entry.name.lower()
+            if name.startswith(prefix) and name.endswith(".dist-info"):
+                return entry.name[len(prefix):-len(".dist-info")]
+    return None
+
+
+def display(argv: list[str], repo_root: Path) -> str:
+    root = str(repo_root) + os.sep
+    parts = [a[len(root):] if a.startswith(root) else a for a in argv]
+    return subprocess.list2cmdline(parts) if sys.platform == "win32" else shlex.join(parts)
+
+
+def _ollama_host(url: str) -> tuple[str, bool]:
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    host = parsed.hostname or "localhost"
+    return f"{host}:{parsed.port or 11434}", host in LOCAL_HOSTS
+
+
+def _install_ollama() -> tuple[list[str], str | None]:
+    if sys.platform == "darwin":
+        return (["brew", "install", "ollama"], None) if shutil.which("brew") else (
+            [], "Install Homebrew, or download Ollama from https://ollama.com/download")
+    if sys.platform == "win32":
+        return (["winget", "install", "--id", "Ollama.Ollama", "-e"], None) if shutil.which("winget") else (
+            [], "Download Ollama from https://ollama.com/download")
+    return [], "Install Ollama with your package manager or from https://ollama.com/download"
+
+
+def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step]:
+    py = venv_python(repo_root)
+    vpy = str(py) if py else str(repo_root / "venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))
+    no_venv = None if py else "Create the virtual environment first"
+    pip = [vpy, "-m", "pip", "install"]
+
+    url = values.get("MAIN_OLLAMA_URL") or default_url
+    host, local = _ollama_host(url)
+    model = values.get("IFA_OLLAMA_MODEL", "").strip()
+    has_ollama = shutil.which("ollama") is not None
+    ollama = check_ollama(url, model, timeout=1.0)
+
+    steps = [
+        Step("venv", "Create the virtual environment",
+             "A private Python for Ifa in ./venv, so its packages don't touch the system Python.",
+             [sys.executable, "-m", "venv", str(repo_root / "venv")], done=py is not None, rerun=False),
+        Step("requirements", "Install core packages",
+             "Wake word, speech-to-text, Ollama client and the rest of ifa/requirements.txt.",
+             [*pip, "-r", str(repo_root / "ifa" / "requirements.txt")],
+             done=bool(installed_version(repo_root, "faster_whisper") and installed_version(repo_root, "openwakeword")),
+             blocked=no_venv),
+        Step("speech", "Install voice and skill packages",
+             "Chatterbox TTS (pulls PyTorch, a few GB) plus the screen, Spotify and WhatsApp skill libraries.",
+             [*pip, *SPEECH_PACKAGES], done=installed_version(repo_root, "chatterbox_tts") is not None,
+             blocked=no_venv),
+    ]
+    if sys.platform != "darwin" and nvidia_gpus():
+        torch = installed_version(repo_root, "torch") or ""
+        steps.append(Step(
+            "torch_cuda", "Switch PyTorch to the CUDA build",
+            "PyPI ships CPU-only PyTorch on Windows. This swaps in the GPU build of the same version Chatterbox needs.",
+            [*pip, "--force-reinstall", "--no-deps", f"torch=={TORCH_VERSION}", f"torchaudio=={TORCH_VERSION}",
+             "--index-url", TORCH_CUDA_INDEX],
+            done="+cu" in torch, blocked=no_venv or (None if torch else "Install voice and skill packages first")))
+    install_argv, install_blocked = _install_ollama()
+    steps += [
+        Step("ollama_install", "Install Ollama", "The local server that runs the language model.",
+             install_argv, done=has_ollama, blocked=None if has_ollama else install_blocked, rerun=False),
+        Step("ollama_start", "Start Ollama", f"Runs ollama serve in the background on {host}.",
+             ["ollama", "serve"], done=ollama["ok"], detached=True, env={"OLLAMA_HOST": host}, rerun=False,
+             blocked=f"{url} is another machine. Start Ollama there" if not local
+             else None if has_ollama else "Install Ollama first"),
+        Step("ollama_pull", "Download the model", f"Pulls {model or 'the configured model'} into Ollama (one time).",
+             ["ollama", "pull", model or "<model>"], done=bool(ollama.get("model_present")), env={"OLLAMA_HOST": host},
+             blocked="Set the model under Language model" if not model else "Install Ollama first" if not has_ollama
+             else None if ollama["ok"] else "Start Ollama first"),
+        Step("voice_models", "Download voice models",
+             "Caches the wake-word and Whisper models so voice mode works offline. Safe to re-run.",
+             [vpy, "-m", "scripts.setup_voice_models"], blocked=no_venv),
+    ]
+    return steps
+
+
+class SetupRunner:
+    def __init__(self, repo_root: Path, runner: AgentProcess, plan_fn) -> None:
+        self.repo_root = repo_root
+        self.runner = runner
+        self._plan = plan_fn
+        self._lock = threading.Lock()
+        self._current: str | None = None
+        self._cancel = threading.Event()
+
+    def status(self) -> dict:
+        with self._lock:
+            return {"running": self._current is not None, "step": self._current}
+
+    def run(self, ids: list[str], only_missing: bool) -> None:
+        known = {s.id for s in self._plan()}
+        unknown = [i for i in ids if i not in known]
+        if unknown or not ids:
+            raise ValueError(f"unknown setup step: {', '.join(unknown) or '(none)'}")
+        with self._lock:
+            if self._current is not None:
+                raise RuntimeError("setup is already running")
+            self._current = ids[0]
+        self._cancel.clear()
+        threading.Thread(target=self._run, args=(ids, only_missing), daemon=True).start()
+
+    def stop(self) -> None:
+        self._cancel.set()
+        self.runner.stop()
+
+    def _run(self, ids: list[str], only_missing: bool) -> None:
+        log = self.runner.log.append
+        try:
+            for step_id in ids:
+                if self._cancel.is_set():
+                    log("[launcher] setup cancelled")
+                    return
+                step = next(s for s in self._plan() if s.id == step_id)
+                with self._lock:
+                    self._current = step.id
+                if only_missing and step.done:
+                    continue
+                if step.blocked:
+                    log(f"[launcher] setup: {step.label}: {step.blocked}")
+                    return
+                log(f"[launcher] setup: {step.label}")
+                log(f"[launcher] $ {display(step.argv, self.repo_root)}")
+                if step.detached:
+                    self._spawn_detached(step)
+                    continue
+                try:
+                    self.runner.start(argv=step.argv, extra_env=step.env)
+                except OSError as exc:
+                    log(f"[launcher] could not run {step.argv[0]}: {exc}")
+                    return
+                code = self.runner.wait()
+                if code != 0:
+                    log(f"[launcher] setup stopped: {step.label} failed (exit code {code})")
+                    return
+            log("[launcher] setup finished")
+        finally:
+            with self._lock:
+                self._current = None
+
+    def _spawn_detached(self, step: Step) -> None:
+        kwargs: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS} \
+            if sys.platform == "win32" else {"start_new_session": True}
+        try:
+            subprocess.Popen(step.argv, env={**os.environ, **step.env}, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+        except OSError as exc:
+            self.runner.log.append(f"[launcher] could not start {step.argv[0]}: {exc}")
+            return
+        for _ in range(30):
+            if self._cancel.wait(0.5):
+                return
+            if next(s for s in self._plan() if s.id == step.id).done:
+                self.runner.log.append("[launcher] Ollama is up")
+                return
+        self.runner.log.append("[launcher] Ollama didn't answer within 15 seconds")

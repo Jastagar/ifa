@@ -12,7 +12,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from launcher import env_file
-from launcher.agent_process import AgentProcess
+from launcher.agent_process import AgentProcess, LogBuffer
+from launcher.setup_steps import SetupRunner, display, plan
 from launcher.settings_schema import BY_KEY, GROUPS, SETTINGS, normalize
 from launcher.system_info import check_ollama, detect_system, venv_python
 
@@ -25,9 +26,34 @@ class Launcher:
     def __init__(self, repo_root: Path, agent: AgentProcess | None = None) -> None:
         self.repo_root = repo_root
         self.env_path = repo_root / ".env"
+        self.log = agent.log if agent else LogBuffer()
         python = venv_python(repo_root) or Path(sys.executable)
-        self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root))
+        self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root), log=self.log)
+        self.setup = SetupRunner(repo_root, AgentProcess([], cwd=str(repo_root), log=self.log, name="setup"), self._plan)
         self._env_lock = threading.Lock()
+
+    def _plan(self):
+        return plan(self.repo_root, env_file.read_env(self.env_path), BY_KEY["MAIN_OLLAMA_URL"].default)
+
+    def setup_steps(self) -> dict:
+        steps = [
+            {"id": s.id, "label": s.label, "help": s.help, "command": display(s.argv, self.repo_root) if s.argv else "",
+             "done": s.done, "blocked": s.blocked, "rerun": s.rerun}
+            for s in self._plan()
+        ]
+        return {"steps": steps, **self.setup.status()}
+
+    def run_setup(self, body: dict) -> dict:
+        if self.agent.status()["state"] == "running":
+            raise RuntimeError("stop the agent before running setup")
+        ids = body.get("steps")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError("steps must be a list of step ids")
+        self.setup.run(ids, only_missing=bool(body.get("only_missing")))
+        return self.setup.status()
+
+    def status(self) -> dict:
+        return {**self.agent.status(), "setup": self.setup.status()}
 
     def settings(self) -> dict:
         values = env_file.read_env(self.env_path)
@@ -97,6 +123,8 @@ class Launcher:
         }
 
     def start_agent(self) -> dict:
+        if self.setup.status()["running"]:
+            raise RuntimeError("wait for setup to finish before launching")
         managed = set(BY_KEY) | set(env_file.read_env(self.env_path))
         self.agent.start(clear_env=managed)
         return self.agent.status()
@@ -162,11 +190,13 @@ def make_handler(launcher: Launcher, token: str, port: int):
             elif url.path == "/api/checks":
                 self._json(HTTPStatus.OK, launcher.checks())
             elif url.path == "/api/status":
-                self._json(HTTPStatus.OK, launcher.agent.status())
+                self._json(HTTPStatus.OK, launcher.status())
+            elif url.path == "/api/setup":
+                self._json(HTTPStatus.OK, launcher.setup_steps())
             elif url.path == "/api/logs":
                 after = int((parse_qs(url.query).get("after") or ["0"])[0])
-                lines, last = launcher.agent.logs_after(after)
-                self._json(HTTPStatus.OK, {"lines": lines, "last": last, **launcher.agent.status()})
+                lines, last = launcher.log.after(after)
+                self._json(HTTPStatus.OK, {"lines": lines, "last": last, **launcher.status()})
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
@@ -183,6 +213,11 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 elif path == "/api/agent/stop":
                     launcher.agent.stop()
                     self._json(HTTPStatus.OK, launcher.agent.status())
+                elif path == "/api/setup/run":
+                    self._json(HTTPStatus.OK, launcher.run_setup(body))
+                elif path == "/api/setup/stop":
+                    launcher.setup.stop()
+                    self._json(HTTPStatus.OK, launcher.setup.status())
                 elif path == "/api/agent/input":
                     launcher.agent.send(str(body.get("text", "")))
                     self._json(HTTPStatus.OK, {"ok": True})
