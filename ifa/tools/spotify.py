@@ -2,25 +2,25 @@ from ifa.core.context import AgentContext
 from ifa.skills.spotify import SpotifySkill
 from ifa.tools.registry import Tool, register
 
+_skill: SpotifySkill | None = None
+
+
+def _spotify(ctx: AgentContext) -> SpotifySkill:
+    global _skill
+    if _skill is None:
+        _skill = SpotifySkill(ctx.tts)
+    return _skill
+
 
 def _handler(args: dict, ctx: AgentContext) -> str:
     action = args["action"]
-    query = args.get("query")
-
-    print("CALLING SPOTIFY")
-    spotify = SpotifySkill(ctx.tts)
-
+    spotify = _spotify(ctx)
     if action == "play":
-        if not query:
-            return "Missing query for play"
-        return spotify.play(query)
-
-    elif action == "pause":
+        return spotify.play(args.get("query"))
+    if action == "pause":
         return spotify.pause()
-
-    elif action == "next":
+    if action == "next":
         return spotify.next()
-
     return "Invalid action"
 
 
@@ -36,6 +36,7 @@ If the user asks to perform an action (play music, stop music, play song etc):
 
 If you fail to call a tool, your response is invalid.
 In case you play wrong song, Call the tool again
+Use action "play" without a query to resume whatever was playing.
         """
     ),
     parameters={

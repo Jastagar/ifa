@@ -17,4 +17,5 @@ ifa/config/n8n_workflows.yaml
 /memory.md
 # Runtime files with secrets / personal data — never commit.
 .cache
+.spotify_token
 PyWhatKit_DB.txt

@@ -117,6 +117,13 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
              ["ollama", "pull", model or "<model>"], done=bool(ollama.get("model_present")), env={"OLLAMA_HOST": host},
              blocked="Set the model under Language model" if not model else "Install Ollama first" if not has_ollama
              else None if ollama["ok"] else "Start Ollama first"),
+        Step("spotify_login", "Log in to Spotify",
+             "Opens Spotify in your browser once and saves the login to .spotify_token, so Ifa can control playback.",
+             [vpy, "-m", "ifa.skills.spotify"], done=(repo_root / ".spotify_token").exists(),
+             blocked=no_venv or ("Add your Spotify keys under Keys first"
+                                 if not (values.get("SPOTIFY_CLIENT_ID") and values.get("SPOTIFY_CLIENT_SECRET"))
+                                 else None if installed_version(repo_root, "spotipy")
+                                 else "Install voice and skill packages first")),
         Step("voice_models", "Download voice models",
              "Caches the wake-word and Whisper models so voice mode works offline. Safe to re-run.",
              [vpy, "-m", "scripts.setup_voice_models"], blocked=no_venv),
