@@ -81,6 +81,10 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .say { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .custom-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; padding: 8px 0; align-items: center; }
 .custom-row code { font-size: 12px; overflow-wrap: anywhere; }
+.app-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr) auto; gap: 8px; padding: 6px 0; align-items: center; }
+.app-row .err { grid-column: 1 / -1; color: var(--danger); font-size: 12px; }
+@media (max-width: 560px) { .app-row { grid-template-columns: minmax(0, 1fr) auto; } .app-row .cmd { grid-column: 1 / -1; grid-row: 2; } }
+.hint { color: var(--muted); font-size: 12px; margin: 8px 0; }
 nav.groups { display: flex; gap: 6px; flex-wrap: wrap; }
 nav.groups a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
 nav.groups a:hover { color: var(--text); }
@@ -123,6 +127,20 @@ nav.groups a:hover { color: var(--text); }
     </section>
     <nav class="groups" id="nav"></nav>
     <div id="groups" class="col"></div>
+    <section class="card" id="apps-card">
+      <h2>Apps Ifa can open</h2>
+      <div class="body">
+        <p class="hint">Say "open" and the name. The command can be a program path, a link like
+          <code>steam://rungameid/570</code>, or a terminal command. An app with a built-in name replaces it.
+          Built in: <span id="builtin-apps"></span>.</p>
+        <div id="apps"></div>
+        <div class="app-row">
+          <input id="new-app-name" type="text" placeholder="Name, e.g. Discord" autocomplete="off" spellcheck="false">
+          <input id="new-app-command" class="cmd" type="text" placeholder="Path, link or command" autocomplete="off" spellcheck="false">
+          <button id="add-app" class="small" type="button">Add</button>
+        </div>
+      </div>
+    </section>
     <section class="card" id="custom-card">
       <h2>Other environment variables</h2>
       <div class="body">
@@ -152,7 +170,11 @@ nav.groups a:hover { color: var(--text); }
 const TOKEN = "__LAUNCHER_TOKEN__";
 const $ = (id) => document.getElementById(id);
 const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null,
-  setup: null, setupRunning: false };
+  setup: null, setupRunning: false, apps: [], appsDirty: false, appErrors: {} };
+
+function dirtyCount() {
+  return Object.keys(state.edits).length + Object.keys(state.custom).length + (state.appsDirty ? 1 : 0);
+}
 
 async function api(path, body) {
   const opts = { headers: { "X-Launcher-Token": TOKEN } };
@@ -190,7 +212,7 @@ function settingValue(s) {
 }
 
 function markDirty() {
-  const n = Object.keys(state.edits).length + Object.keys(state.custom).length;
+  const n = dirtyCount();
   $("save").disabled = n === 0;
   $("dirty").hidden = n === 0;
   $("dirty").textContent = `${n} unsaved`;
@@ -340,7 +362,7 @@ async function loadSetup() {
 }
 
 async function runSetup(ids, onlyMissing) {
-  if (Object.keys(state.edits).length + Object.keys(state.custom).length && !(await save())) return;
+  if (dirtyCount() && !(await save())) return;
   try {
     await api("/api/setup/run", { steps: ids, only_missing: onlyMissing });
     state.setupRunning = true; state.setup.step = ids[0]; renderSetup(); banner("");
@@ -358,16 +380,36 @@ async function loadSettings() {
   renderSettings();
 }
 
+function renderApps() {
+  $("apps").replaceChildren(...state.apps.map((app, i) => {
+    const name = el("input", { type: "text", value: app.name, autocomplete: "off", spellcheck: "false", "aria-label": "App name" });
+    const command = el("input", { type: "text", class: "cmd", value: app.command, autocomplete: "off", spellcheck: "false", "aria-label": "Command" });
+    const changed = () => { app.name = name.value; app.command = command.value; state.appsDirty = true; markDirty(); };
+    name.addEventListener("input", changed); command.addEventListener("input", changed);
+    const remove = el("button", { class: "small danger", type: "button", onclick: () => {
+      state.apps.splice(i, 1); state.appsDirty = true; state.appErrors = {}; renderApps(); markDirty(); } }, "Remove");
+    return el("div", { class: "app-row", id: "app-" + i }, name, command, remove,
+      state.appErrors[i] ? el("div", { class: "err" }, state.appErrors[i]) : null);
+  }));
+}
+
+async function loadApps() {
+  const data = await api("/api/apps");
+  state.apps = data.apps; state.appsDirty = false; state.appErrors = {};
+  $("builtin-apps").textContent = data.builtin.join(", ");
+  renderApps(); markDirty();
+}
+
 async function save() {
   $("save").disabled = true;
+  let restartNeeded = false;
   try {
-    const result = await api("/api/settings", { values: state.edits, custom: state.custom });
-    state.schema = result; state.edits = {}; state.custom = {}; state.errors = {};
-    renderSettings(); loadChecks();
-    if (result.restart_needed) banner("Saved. Restart the agent to apply the new settings.", "warn",
-      el("button", { class: "small", onclick: restart }, "Restart now"));
-    else banner("");
-    return true;
+    if (Object.keys(state.edits).length + Object.keys(state.custom).length) {
+      const result = await api("/api/settings", { values: state.edits, custom: state.custom });
+      state.schema = result; state.edits = {}; state.custom = {}; state.errors = {};
+      restartNeeded = result.restart_needed;
+      renderSettings(); loadChecks();
+    }
   } catch (e) {
     state.errors = e.fields || {};
     renderSettings();
@@ -377,10 +419,30 @@ async function save() {
     markDirty();
     return false;
   }
+  if (state.appsDirty) {
+    try {
+      const result = await api("/api/apps", { apps: state.apps });
+      state.apps = result.apps; state.appsDirty = false; state.appErrors = {};
+      restartNeeded = restartNeeded || result.restart_needed;
+      renderApps();
+    } catch (e) {
+      state.appErrors = e.fields || {};
+      renderApps();
+      banner(e.fields ? "Some apps are invalid. Fix the highlighted rows." : "Saving apps failed: " + e.message, "error");
+      $("apps-card").scrollIntoView({ behavior: "smooth", block: "center" });
+      markDirty();
+      return false;
+    }
+  }
+  if (restartNeeded) banner("Saved. Restart the agent to apply the changes.", "warn",
+    el("button", { class: "small", onclick: restart }, "Restart now"));
+  else banner("");
+  markDirty();
+  return true;
 }
 
 async function launch() {
-  if (Object.keys(state.edits).length + Object.keys(state.custom).length && !(await save())) return;
+  if (dirtyCount() && !(await save())) return;
   if (!fieldValue("IFA_OLLAMA_MODEL")) { banner("Set the model (Language model → Model) before launching.", "error"); return; }
   $("launch").disabled = true;
   try { await api("/api/agent/start", {}); banner(""); }
@@ -444,6 +506,13 @@ $("add-custom").addEventListener("click", () => {
   state.custom[key] = value; $("new-key").value = ""; $("new-value").value = "";
   banner(""); renderSettings();
 });
+$("add-app").addEventListener("click", () => {
+  const name = $("new-app-name").value.trim(), command = $("new-app-command").value.trim();
+  if (!name || !command) { banner("Give the app a name and a command.", "error"); return; }
+  state.apps.push({ name, command }); state.appsDirty = true;
+  $("new-app-name").value = ""; $("new-app-command").value = "";
+  banner(""); renderApps(); markDirty();
+});
 $("say").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("say-text").value.trim();
@@ -452,10 +521,10 @@ $("say").addEventListener("submit", async (ev) => {
   try { await api("/api/agent/input", { text }); } catch (e) { banner("Couldn't send: " + e.message, "error"); }
 });
 window.addEventListener("beforeunload", (ev) => {
-  if (Object.keys(state.edits).length + Object.keys(state.custom).length) { ev.preventDefault(); ev.returnValue = ""; }
+  if (dirtyCount()) { ev.preventDefault(); ev.returnValue = ""; }
 });
 
-loadSettings().then(() => Promise.all([loadChecks(), loadSetup()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
+loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
 pollLogs();
 setInterval(pollLogs, 800);
 </script>

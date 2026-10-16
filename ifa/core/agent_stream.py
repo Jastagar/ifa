@@ -207,6 +207,8 @@ def agent_turn_stream(
     on_sentence=None,
     on_tool_calls=None,
 ) -> str:
+    ctx.turn += 1
+    ctx.user_text = user_text
     nonce = _new_nonce()
     messages = _build_messages(user_text, ctx, memory, nonce)
     tool_hops = 0

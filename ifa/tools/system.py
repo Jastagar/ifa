@@ -1,48 +1,50 @@
 from ifa.core.context import AgentContext
-from ifa.skills.system import Application
+from ifa.services import custom_apps
 from ifa.skills.enums import App
-from ifa.tools.registry import Tool, register
+from ifa.skills.system import Application, launch_custom
+from ifa.tools.registry import Tool
 
-def _handler(args: dict, ctx: AgentContext) -> str:
-    print("APP TRIED TO OPEN")
-    appName = args["app"]
-    print(args)
-    arguments = args.get("args","")
-    print(arguments)
-    return Application(ctx.tts).open_app(appName,arguments)
 
-TOOL = Tool(
-    name="open_app",
-    description=(
-        "Open an app on this computer. Call it whenever the user says to open, launch or start an app, "
-        "without asking for confirmation. "
-        "If the request also asks for something inside the app (for example 'open Spotify and play X'), "
-        "call open_app first and then the tool for the rest (spotify_control); the other tool never opens the app. "
-        "To open a website, use app 'brave' and put www.<websitename> in args. "
-        "For adult or NSFW content (sex, violence, drugs) or when the user asks for it, use 'private brave'."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "app": {
-                "type": "string",
-                "enum": [a.value for a in App],
-                "description": (
-                    "when user askes for specific app to open"
-                )
+def build_tool(apps_file=custom_apps.APPS_FILE) -> Tool:
+    custom = {app["name"].lower(): app for app in custom_apps.load(apps_file)}
+    builtin = [a.value for a in App if a.value not in custom]
+    names = builtin + [app["name"] for app in custom.values()]
+
+    def handler(args: dict, ctx: AgentContext) -> str:
+        name = args["app"]
+        app = custom.get(name.lower())
+        if app is None:
+            return Application(ctx.tts).open_app(name, args.get("args", ""))
+        print(f"[apps] opening {app['name']}: {app['command']}")
+        launch_custom(app["command"])
+        return f"Opening {app['name']}"
+
+    return Tool(
+        name="open_app",
+        description=(
+            "Open an app on this computer. Call it whenever the user says to open, launch or start an app, "
+            "without asking for confirmation. "
+            "If the request also asks for something inside the app (for example 'open Spotify and play X'), "
+            "call open_app first and then the tool for the rest (spotify_control); the other tool never opens the app. "
+            "To open a website, use app 'brave' and put www.<websitename> in args. "
+            "For adult or NSFW content (sex, violence, drugs) or when the user asks for it, use 'private brave'. "
+            "Pick the closest name from the list, even if the user says it differently."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "app": {
+                    "type": "string",
+                    "enum": names,
+                    "description": "The app to open.",
+                },
+                "args": {
+                    "type": "string",
+                    "description": "Only for brave / private brave: the website to open, e.g. www.youtube.com.",
+                },
             },
-            "args":{
-                "type": "string",
-                "description": (
-                    "space seprated arguments for cmd commands"
-                    "eg. website url for opening on browser"
-                ),
-            }
+            "required": ["app"],
+            "additionalProperties": False,
         },
-        "required":["app"],
-        "additionalProperties": False,
-    },
-    handler=_handler,
-)
-
-register(TOOL)
+        handler=handler,
+    )

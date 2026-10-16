@@ -1,8 +1,11 @@
 from ifa.skills.enums import App
 from datetime import datetime
+import re
 import subprocess
 import sys
 import os
+
+URI = re.compile(r"^[a-z][a-z0-9+.-]+:\S*$", re.IGNORECASE)
 
 
 APP_COMMANDS = {
@@ -72,3 +75,20 @@ class Application:
                 os.startfile(cmd)
         else:
             subprocess.Popen(cmd if isinstance(cmd, list) else [cmd])
+
+def launch_custom(command: str) -> None:
+    target = os.path.expanduser(os.path.expandvars(command.strip().strip('"')))
+    if os.path.exists(target) or URI.match(target):
+        if sys.platform == "win32":
+            os.startfile(target)
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        subprocess.Popen(command, shell=True, creationflags=flags,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.Popen(command, shell=True, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

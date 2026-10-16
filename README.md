@@ -20,11 +20,16 @@ It opens a local page where you can:
 - set up the environment from the **Setup** list: create the venv, install packages (plus the CUDA build of PyTorch when an NVIDIA GPU is found), install and start Ollama, pull the model, download the voice models. Each step shows its exact command (copy it to run it yourself), whether it's already done, and a Run button; **Run missing steps** does them in order and stops at the first failure
 - edit every setting (model, GPU/CPU per component, voice, notifications, keys) with validation; saves go to `.env`
 - add any other environment variable the agent should get
+- add apps Ifa can open by name ("open Discord"): a name plus a program path, a link like `steam://rungameid/570`, or a command. Stored in `apps.json` (not committed)
 - launch / stop Ifa and watch its output; in text mode, type to Ifa from the page
 
 Adding a new setting means adding one `Setting(...)` line to `launcher/settings_schema.py`; the page builds itself from that list. The launcher only listens on `127.0.0.1` and never sends secret values back to the browser.
 
 The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launcher with any Python 3.10+ and press **Run missing steps**. The page only sends step names; the commands themselves are defined in `launcher/setup_steps.py`.
+
+## Running commands
+
+Ifa can run terminal commands (`cmd.exe` on Windows) with the `run_command` tool, for things like "what's my IP" or "how much disk space is left". It never runs one on its own: the first call only proposes the command, Ifa asks, and it runs only if your **very next** message is a yes (yes / okay / go ahead / haan …) within two minutes. That check is in code (`ifa/skills/commands.py`), not just the prompt. Commands that delete recursively, format disks, shut down, change accounts or permissions, or pipe downloaded code into a shell are refused outright. Turn the tool off with `IFA_COMMANDS_ENABLED=0` (launcher: Tools).
 
 ## Testing phone notifications
 

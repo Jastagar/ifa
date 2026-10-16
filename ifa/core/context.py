@@ -15,3 +15,5 @@ class AgentContext:
     n8n_config: dict = field(default_factory=dict)
     contacts: dict = field(default_factory=dict)
     notifications: "NotificationCenter | None" = None
+    turn: int = 0
+    user_text: str = ""

@@ -28,6 +28,7 @@ GROUPS = (
     ("model", "Language model"),
     ("listening", "Listening"),
     ("speaking", "Speaking"),
+    ("tools", "Tools"),
     ("notifications", "Notifications"),
     ("keys", "Keys"),
     ("advanced", "Advanced"),
@@ -82,6 +83,10 @@ SETTINGS = (
     Setting("IFA_TTS_COOLDOWN_MS", "Echo cooldown (ms)", "speaking", "number", "500",
             "After Ifa speaks, ignore the mic this long so she doesn't hear herself.", minimum=0, maximum=5000),
 
+    Setting("IFA_COMMANDS_ENABLED", "Allow running commands", "tools", "bool", "1",
+            "Lets Ifa run terminal commands (cmd.exe on Windows). It always asks first and runs only after you say yes."),
+    Setting("IFA_COMMAND_TIMEOUT_SEC", "Command time limit (s)", "tools", "number", "30",
+            "Stop a command that is still running after this long.", minimum=1, maximum=600),
     Setting("IFA_API_ENABLED", "Notification API", "notifications", "bool", "1",
             "Accept phone notifications on POST /activate."),
     Setting("IFA_API_HOST", "API host", "notifications", "text", "127.0.0.1",

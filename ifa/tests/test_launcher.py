@@ -126,6 +126,16 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(set(cm.exception.errors), {"IFA_WAKE_THRESHOLD", "NOPE"})
         self.assertEqual(env_file.read_env(self.root / ".env")["IFA_MODE"], "text")
 
+    def test_apps_save_and_reject_bad_rows(self):
+        result = self.launcher.save_apps({"apps": [{"name": "Discord", "command": "discord://"}]})
+        self.assertEqual(result["apps"], [{"name": "Discord", "command": "discord://"}])
+        self.assertIn("spotify", result["builtin"])
+        self.assertTrue((self.root / "apps.json").exists())
+        with self.assertRaises(SettingsError) as cm:
+            self.launcher.save_apps({"apps": [{"name": "A", "command": "x"}, {"name": "a", "command": "y"}]})
+        self.assertEqual(set(cm.exception.errors), {"1"})
+        self.assertEqual(self.launcher.apps()["apps"], [{"name": "Discord", "command": "discord://"}])
+
     def test_custom_variables(self):
         self.launcher.save({"custom": {"MY_KEY": "v", "CLAUDE_KEY": None}})
         values = env_file.read_env(self.root / ".env")

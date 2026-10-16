@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ifa.services import custom_apps
+from ifa.skills.enums import App
 from launcher import env_file
 from launcher.agent_process import AgentProcess, LogBuffer
 from launcher.setup_steps import SetupRunner, display, plan
@@ -26,6 +28,7 @@ class Launcher:
     def __init__(self, repo_root: Path, agent: AgentProcess | None = None) -> None:
         self.repo_root = repo_root
         self.env_path = repo_root / ".env"
+        self.apps_path = repo_root / "apps.json"
         self.log = agent.log if agent else LogBuffer()
         python = venv_python(repo_root) or Path(sys.executable)
         self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root), log=self.log)
@@ -113,6 +116,16 @@ class Launcher:
             env_file.update_env(self.env_path, changes)
         return {**self.settings(), "restart_needed": self.agent.status()["state"] == "running"}
 
+    def apps(self) -> dict:
+        return {"apps": custom_apps.load(self.apps_path), "builtin": [a.value for a in App]}
+
+    def save_apps(self, body: dict) -> dict:
+        apps, errors = custom_apps.validate(body.get("apps"))
+        if errors:
+            raise SettingsError({str(i): message for i, message in errors.items()})
+        custom_apps.save(apps, self.apps_path)
+        return {**self.apps(), "restart_needed": self.agent.status()["state"] == "running"}
+
     def checks(self) -> dict:
         values = env_file.read_env(self.env_path)
         model_url = values.get("MAIN_OLLAMA_URL") or BY_KEY["MAIN_OLLAMA_URL"].default
@@ -191,6 +204,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 self._json(HTTPStatus.OK, launcher.checks())
             elif url.path == "/api/status":
                 self._json(HTTPStatus.OK, launcher.status())
+            elif url.path == "/api/apps":
+                self._json(HTTPStatus.OK, launcher.apps())
             elif url.path == "/api/setup":
                 self._json(HTTPStatus.OK, launcher.setup_steps())
             elif url.path == "/api/logs":
@@ -213,6 +228,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 elif path == "/api/agent/stop":
                     launcher.agent.stop()
                     self._json(HTTPStatus.OK, launcher.agent.status())
+                elif path == "/api/apps":
+                    self._json(HTTPStatus.OK, launcher.save_apps(body))
                 elif path == "/api/setup/run":
                     self._json(HTTPStatus.OK, launcher.run_setup(body))
                 elif path == "/api/setup/stop":
