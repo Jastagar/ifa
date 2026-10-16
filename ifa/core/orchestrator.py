@@ -155,11 +155,15 @@ def run() -> None:
 
         timer = latency.claim_or_begin("text")
         first_sentence_spoken = threading.Event()
+        # Makes "has the answer started?" + "queue the ack" one atomic step,
+        # so an ack can never be queued after an answer sentence.
+        speech_order = threading.Lock()
 
         def streaming_callback(sentence: str):
-            timer.mark("first_sentence")
-            first_sentence_spoken.set()
-            on_sentence(sentence)
+            with speech_order:
+                timer.mark("first_sentence")
+                first_sentence_spoken.set()
+                on_sentence(sentence)
 
         ack_future = executor.submit(
             ack_skill.generate,
@@ -176,9 +180,13 @@ def run() -> None:
         if not first_sentence_spoken.wait(timeout=0.2):
             try:
                 acknowledgement = ack_future.result()
-                timer.ack_text = acknowledgement
-                timer.mark("ack_queued")
-                on_sentence(acknowledgement)
+                with speech_order:
+                    # With streaming, the answer can start while the ack is
+                    # still generating; a late ack would play after it.
+                    if not first_sentence_spoken.is_set():
+                        timer.ack_text = acknowledgement
+                        timer.mark("ack_queued")
+                        on_sentence(acknowledgement)
 
             except Exception:
                 traceback.print_exc()

@@ -32,15 +32,16 @@ def stream_chat(
     """
     Stream chat chunks from Ollama's /api/chat endpoint.
 
-    Yields parsed JSON chunks incrementally.
-
-    Each yielded object is one streamed response fragment.
+    Yields parsed JSON chunks as Ollama produces them: content arrives a few
+    tokens at a time, a tool call arrives whole in a single chunk, and the
+    final chunk (``done: true``) carries the timing stats. Streaming is what
+    lets the first sentence reach TTS while the rest is still generating.
     """
 
     payload: dict = {
         "model": model,
         "messages": messages,
-        "stream": False,
+        "stream": True,
         "think": think,
         "keep_alive": OLLAMA_KEEP_ALIVE,
     }

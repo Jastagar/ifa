@@ -12,6 +12,7 @@ from ifa.services.ollama_client import (
     build_tool_result_message,
     chat,
     check_health,
+    stream_chat,
 )
 
 
@@ -95,6 +96,35 @@ class ChatTests(unittest.TestCase):
                    return_value=_mock_response(500)):
             with self.assertRaises(httpx.HTTPStatusError):
                 chat(MODEL, [{"role": "user", "content": "hi"}])
+
+
+class StreamChatTests(unittest.TestCase):
+    def _stream(self, lines: list[str]):
+        response = MagicMock()
+        response.iter_lines.return_value = iter(lines)
+        ctx = MagicMock()
+        ctx.__enter__.return_value = response
+        return patch("ifa.services.ollama_client.httpx.stream", return_value=ctx)
+
+    def test_requests_streaming(self):
+        """Without stream=True the first sentence waits for the whole reply."""
+        with self._stream([]) as stream:
+            list(stream_chat(MODEL, [{"role": "user", "content": "hi"}]))
+        self.assertTrue(stream.call_args.kwargs["json"]["stream"])
+
+    def test_yields_each_chunk_in_order_and_skips_blank_lines(self):
+        lines = [
+            '{"message": {"content": "Hello"}}',
+            "",
+            '{"message": {"content": " there."}}',
+            '{"message": {"content": ""}, "done": true, "eval_count": 2}',
+        ]
+        with self._stream(lines):
+            chunks = list(stream_chat(MODEL, [{"role": "user", "content": "hi"}]))
+        self.assertEqual(
+            [c["message"]["content"] for c in chunks], ["Hello", " there.", ""]
+        )
+        self.assertTrue(chunks[-1]["done"])
 
 
 class CheckHealthTests(unittest.TestCase):
