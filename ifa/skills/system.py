@@ -40,7 +40,6 @@ class Application:
                 app = App(app.lower())
 
             self.launch_app(app, arguments)
-            self.tts.speak(f"Opening {app.value}")
             return f"Opening {app.value}"
         except Exception as e:
             print(e)
@@ -68,8 +67,7 @@ class Application:
 
         if platform == "win32":
             if isinstance(cmd, list):
-                cmd.append(arguments)
-                subprocess.Popen(cmd)
+                subprocess.Popen(cmd + [arguments] if arguments else cmd)
             else:
                 os.startfile(cmd)
         else:

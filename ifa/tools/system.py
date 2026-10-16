@@ -14,9 +14,12 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 TOOL = Tool(
     name="open_app",
     description=(
-        "call this when user wants you to open an app. in this can you must pass 'app' property ask for confirmation first"
-        "if asked to open a website specifically or asked to open something on browser, just pass in www.<websitename> in args"
-        "if asked to open some adult or NSFW thing, open them in private browser, anything related to sex, violance, drugs or if user specifically asks"
+        "Open an app on this computer. Call it whenever the user says to open, launch or start an app, "
+        "without asking for confirmation. "
+        "If the request also asks for something inside the app (for example 'open Spotify and play X'), "
+        "call open_app first and then the tool for the rest (spotify_control); the other tool never opens the app. "
+        "To open a website, use app 'brave' and put www.<websitename> in args. "
+        "For adult or NSFW content (sex, violence, drugs) or when the user asks for it, use 'private brave'."
     ),
     parameters={
         "type": "object",

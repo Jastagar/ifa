@@ -37,6 +37,8 @@ If the user asks to perform an action (play music, stop music, play song etc):
 If you fail to call a tool, your response is invalid.
 In case you play wrong song, Call the tool again
 Use action "play" without a query to resume whatever was playing.
+This tool only controls playback through the Spotify API. It never opens or shows the Spotify app;
+if the user says to open Spotify, also call open_app with app "spotify", before this tool.
         """
     ),
     parameters={
