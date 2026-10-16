@@ -1,6 +1,9 @@
 import os
+import re
 import sys
 import time
+import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import requests
@@ -13,6 +16,10 @@ TOKEN_CACHE = REPO_ROOT / ".spotify_token"
 SCOPE = "user-modify-playback-state user-read-playback-state"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 DEVICE_WAIT_SEC = 8
+SEARCH_LIMIT = 10
+MAX_CANDIDATES = 6
+VARIANTS = ("slowed", "reverb", "sped up", "lofi", "lo-fi", "lo fi", "remix", "cover", "karaoke",
+            "instrumental", "8d", "mashup", "unplugged", "reprise", "acoustic")
 LOGIN_HINT = (
     "Spotify isn't logged in yet. Run 'Log in to Spotify' in the launcher's Setup list, "
     "or python -m ifa.skills.spotify"
@@ -64,15 +71,57 @@ def explain(exc: Exception) -> str:
     return f"Spotify failed: {exc}"
 
 
+def _normalize(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text.lower())
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^\w\s]", " ", text).split())
+
+
+def variant_of(track: dict) -> str | None:
+    name = _normalize(track["name"] + " " + track.get("album", {}).get("name", ""))
+    return next((v for v in VARIANTS if re.search(rf"\b{re.escape(v)}\b", name)), None)
+
+
+def match_score(track: dict, query: str, artist: str | None, rank: int) -> float:
+    title = _normalize(re.split(r"\s[(\[-]", track["name"])[0])
+    wanted = _normalize(query)
+    score = SequenceMatcher(None, title, wanted).ratio()
+    if title and (title in wanted or wanted in title):
+        score += 0.3
+    artists = _normalize(" ".join(a["name"] for a in track.get("artists", [])))
+    if artist:
+        score += 0.4 * SequenceMatcher(None, artists, _normalize(artist)).ratio()
+    elif any(w in artists for w in wanted.split() if len(w) > 3):
+        score += 0.15
+    variant = variant_of(track)
+    if variant:
+        score += 0.4 if variant in wanted else -0.6
+    score += 0.3 * track.get("popularity", 0) / 100
+    return score - 0.02 * rank
+
+
+def describe(track: dict) -> str:
+    artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
+    album = track.get("album", {})
+    year = (album.get("release_date") or "")[:4]
+    extra = ", ".join(x for x in (album.get("name") and f"album {album['name']}", year) if x)
+    variant = variant_of(track)
+    return f"{track['name']} by {artists}" + (f" ({extra})" if extra else "") + (f" [{variant} version]" if variant else "")
+
+
 class SpotifySkill:
     def __init__(self, tts=None, auth: SpotifyOAuth | None = None, client=None, sleep=time.sleep) -> None:
         self.tts = tts
         self.auth = auth or make_auth()
         self.sp = client or spotipy.Spotify(auth_manager=self.auth, requests_timeout=10, retries=1)
         self._sleep = sleep
+        self.candidates: list[dict] = []
 
-    def play(self, query: str | None = None) -> str:
-        return self._run(self._play, query)
+    def search(self, query: str, artist: str | None = None) -> str:
+        return self._run(self._search_text, query, artist)
+
+    def play(self, query: str | None = None, choice: int | None = None, artist: str | None = None) -> str:
+        return self._run(self._play, query, choice, artist)
 
     def pause(self) -> str:
         return self._run(lambda: (self.sp.pause_playback(), "Paused.")[1])
@@ -88,14 +137,44 @@ class SpotifySkill:
         except Exception as exc:
             raise SpotifyError(explain(exc)) from exc
 
-    def _play(self, query: str | None) -> str:
-        if not query:
+    def _search(self, query: str, artist: str | None) -> list[dict]:
+        query = " ".join(query.split())
+        queries = [f"track:{query} artist:{artist}", f"{query} {artist}"] if artist else [query]
+        items: list[dict] = []
+        for q in queries:
+            items = self.sp.search(q=q, limit=SEARCH_LIMIT, type="track", market="from_token")["tracks"]["items"]
+            if items:
+                break
+        seen, unique = set(), []
+        for rank, track in enumerate(t for t in items if t):
+            key = (_normalize(track["name"]), _normalize(track["artists"][0]["name"]) if track.get("artists") else "")
+            if key not in seen:
+                seen.add(key)
+                unique.append((match_score(track, query, artist, rank), track))
+        unique.sort(key=lambda pair: pair[0], reverse=True)
+        self.candidates = [track for _, track in unique[:MAX_CANDIDATES]]
+        return self.candidates
+
+    def _search_text(self, query: str, artist: str | None) -> str:
+        if not self._search(query, artist):
+            return f"No songs found on Spotify for {query}."
+        lines = [f"{i}. {describe(t)}" for i, t in enumerate(self.candidates, 1)]
+        return ("Spotify results, best guess first:\n" + "\n".join(lines) +
+                "\nNow call spotify_control with action play and choice set to the number that matches the song "
+                "Sir asked for. Prefer the original over remix, slowed, lofi or cover versions unless he asked for one.")
+
+    def _play(self, query: str | None, choice: int | None, artist: str | None) -> str:
+        if choice is not None:
+            if not 1 <= choice <= len(self.candidates):
+                return f"There is no result number {choice}. Search again first."
+            track = self.candidates[choice - 1]
+        elif query:
+            if not self._search(query, artist):
+                return f"Couldn't find {query} on Spotify."
+            track = self.candidates[0]
+        else:
             self.sp.start_playback(device_id=self._device())
             return "Resumed playback."
-        items = self.sp.search(q=query, limit=1, type="track")["tracks"]["items"]
-        if not items:
-            return f"Couldn't find {query} on Spotify."
-        track = items[0]
         self.sp.start_playback(device_id=self._device(), uris=[track["uri"]])
         artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
         return f"Playing {track['name']}" + (f" by {artists}." if artists else ".")

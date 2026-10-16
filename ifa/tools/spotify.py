@@ -15,8 +15,12 @@ def _spotify(ctx: AgentContext) -> SpotifySkill:
 def _handler(args: dict, ctx: AgentContext) -> str:
     action = args["action"]
     spotify = _spotify(ctx)
+    if action == "search":
+        if not args.get("query"):
+            return "ERROR: search needs a query."
+        return spotify.search(args["query"], args.get("artist"))
     if action == "play":
-        return spotify.play(args.get("query"))
+        return spotify.play(args.get("query"), args.get("choice"), args.get("artist"))
     if action == "pause":
         return spotify.pause()
     if action == "next":
@@ -27,30 +31,21 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 TOOL = Tool(
     name="spotify_control",
     description=(
-        """
-If the user asks to perform an action (play music, stop music, play song etc):
-
-- You MUST call a spotify_control tool
-- You MUST NOT pretend the action succeeded
-- You MUST NOT return a normal message instead of calling a tool
-
-If you fail to call a tool, your response is invalid.
-In case you play wrong song, Call the tool again
-Use action "play" without a query to resume whatever was playing.
-This tool only controls playback through the Spotify API. It never opens or shows the Spotify app;
-if the user says to open Spotify, also call open_app with app "spotify", before this tool.
-        """
+        "Control Spotify through its API. It never opens or shows the app: if Sir says to open Spotify, "
+        "call open_app with app spotify first. "
+        "To play a song, use two steps. First call action search with query set to the song name as Sir said it, "
+        "and artist if he named one. Then read the numbered results and call action play with choice set to the "
+        "number of the closest match, preferring the original over remix, slowed, lofi or cover versions unless "
+        "he asked for one. Never say a song is playing before the play call succeeds. "
+        "Action play with no choice resumes playback; pause and next control what is playing."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["play", "pause", "next"]
-            },
-            "query": {
-                "type": "string"
-            }
+            "action": {"type": "string", "enum": ["search", "play", "pause", "next"]},
+            "query": {"type": "string", "description": "Song name for search, as Sir said it."},
+            "artist": {"type": "string", "description": "Artist name, only if Sir named one."},
+            "choice": {"type": "integer", "minimum": 1, "description": "Result number from the last search."},
         },
         "required": ["action"],
         "additionalProperties": False,
