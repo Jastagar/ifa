@@ -1,18 +1,3 @@
-"""Speech-to-text via Whisper-Hindi2Hinglish-Swift.
-
-Primary entry point for Stage 2 voice mode is ``transcribe_array`` —
-Unit 3's capture step produces a float32 numpy array at 16 kHz, and
-this module runs it through Whisper and returns the transcribed text.
-
-Model is loaded lazily the first time a transcribe function is called,
-then reused across turns.
-
-Uses:
-    Oriserve/Whisper-Hindi2Hinglish-Swift
-
-Optimized for Hindi + Hinglish conversational speech.
-"""
-
 from __future__ import annotations
 
 import os
@@ -26,8 +11,6 @@ _processor: Optional[object] = None
 
 
 def _get_model():
-    """Load Whisper model lazily."""
-
     global _model, _processor
 
     if _model is None:
@@ -84,12 +67,6 @@ def transcribe_array(
     *,
     language: str = "hi"
 ) -> str:
-    """
-    Transcribe float32 numpy array at 16kHz mono.
-
-    Keeps the same interface as faster-whisper.
-    """
-
     if audio is None or len(audio) == 0:
         return ""
 

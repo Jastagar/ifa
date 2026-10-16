@@ -5,9 +5,7 @@ import subprocess
 from pathlib import Path
 
 
-
 class GameLauncher:
-
     def __init__(self):
         self.games = self._load_games()
 
@@ -18,7 +16,6 @@ class GameLauncher:
             return json.load(f)
 
     def launch(self, game_name: str) -> str:
-
         game_name = game_name.lower()
 
         if game_name not in self.games:

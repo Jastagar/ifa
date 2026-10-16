@@ -4,27 +4,11 @@ from collections.abc import Callable
 
 
 class SpeechQueue:
-    """
-    Simple producer-consumer speech queue.
-
-    Producer:
-        enqueue(text)
-
-    Consumer:
-        worker thread calls handler(text)
-
-    Designed for:
-    - streaming LLM output
-    - async TTS playback
-    - interruption-safe queue clearing
-    """
-
     def __init__(
         self,
         handler: Callable[[str], None],
         maxsize: int = 32,
     ):
-
         self._handler = handler
 
         self._queue = queue.Queue(
@@ -40,21 +24,15 @@ class SpeechQueue:
 
         self._worker.start()
 
-    # -------------------------------------------------
-    # PUBLIC
-    # -------------------------------------------------
 
     def enqueue(self, text: str):
-
         if not text:
             return
 
         self._queue.put(text)
 
     def clear(self):
-
         while True:
-
             try:
                 self._queue.get_nowait()
 
@@ -62,27 +40,20 @@ class SpeechQueue:
                 break
 
     def stop(self):
-
         self._stop_event.set()
 
         self._queue.put(None)
 
     def wait_until_empty(self):
-        """Block until every enqueued item has been handed to the handler."""
         self._queue.join()
 
     @property
     def size(self) -> int:
         return self._queue.qsize()
 
-    # -------------------------------------------------
-    # INTERNAL
-    # -------------------------------------------------
 
     def _run(self):
-
         while not self._stop_event.is_set():
-
             item = self._queue.get()
 
             if item is None:

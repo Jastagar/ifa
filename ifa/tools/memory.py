@@ -27,7 +27,6 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 
     content = MEMORY_FILE.read_text(encoding="utf-8")
 
-    # Prevent duplicates
     if memory.lower() in content.lower():
         return "I already know that."
 

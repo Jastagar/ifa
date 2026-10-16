@@ -1,8 +1,3 @@
-"""`set_reminder` tool — adapter wrapping ifa.skills.reminder.ReminderSkill.schedule().
-
-The adapter constructs a fresh `ReminderSkill` per call with `ctx.tts`.
-ReminderSkill.__init__ is cheap (just stores tts); no singleton needed.
-"""
 from ifa.core.context import AgentContext
 from ifa.skills.reminder import ReminderSkill
 from ifa.tools.registry import Tool, register

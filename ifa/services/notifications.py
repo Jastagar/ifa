@@ -1,26 +1,3 @@
-"""Phone notifications: group, triage, queue, and announce them.
-
-Flow:
-    phone → backend → POST /activate → NotificationCenter.receive()
-        → NotificationInbox groups messages per sender into a Burst
-        → once the sender goes quiet (IFA_NOTIF_SETTLE_SEC), the burst is
-          classified urgent / not urgent by the LLM
-        → an announcement is queued: urgent → "Sir, there is an urgent
-          message for you." then listen; normal → listening cue then listen
-        → the user asks "what is it?" → the model calls read_notifications
-
-Queues:
-    recent    — at most IFA_NOTIF_MAX_RECENT unread bursts. A burst leaves
-                it when read, when it is older than IFA_NOTIF_TTL_SEC, or
-                when newer bursts push it out.
-    discarded — everything that left `recent` (bounded). Only read when the
-                user explicitly asks for older notifications.
-
-Trust boundary: notification text is written by other people. It is shown
-to the model only as delimited tool data, and never decides anything on
-its own — the word "urgent" in a message is evidence for the classifier,
-not a switch.
-"""
 from __future__ import annotations
 
 import json
@@ -34,11 +11,6 @@ from typing import Callable
 
 import httpx
 
-# Per-app priority keyword. The phone app will send this per app later;
-# until then it is hardcoded. A `priority` field in the payload overrides it.
-#   high   — people you talk to: classify and announce
-#   normal — classify and announce
-#   low    — store silently (readable later), never announce
 APP_PRIORITY = {
     "com.whatsapp": "high",
     "com.whatsapp.w4b": "high",
@@ -67,16 +39,14 @@ class Message:
 
 @dataclass
 class Burst:
-    """Consecutive messages from one sender in one app, treated as one notification."""
-
     app: str
     package: str
     sender: str
     priority: str
     messages: list[Message] = field(default_factory=list)
     urgent: bool = False
-    classified_count: int = 0          # messages already seen by the classifier
-    announced: str | None = None       # None | "normal" | "urgent"
+    classified_count: int = 0
+    announced: str | None = None
     read: bool = False
 
     @property
@@ -85,8 +55,6 @@ class Burst:
 
 
 class NotificationInbox:
-    """Thread-safe store for bursts. Pure logic: time comes from `clock`."""
-
     def __init__(
         self,
         max_recent: int | None = None,
@@ -105,11 +73,6 @@ class NotificationInbox:
         self._discarded: deque[Burst] = deque(maxlen=max_discarded)
 
     def add(self, app: str, package: str, sender: str, text: str, priority: str) -> Burst | None:
-        """Append a message to its sender's unread burst, or start a new burst.
-
-        Returns None for an exact repeat (Android often re-posts the same
-        notification when it updates).
-        """
         now = self._clock()
         with self._lock:
             self._flush_locked(now)
@@ -127,7 +90,6 @@ class NotificationInbox:
             return burst
 
     def settled(self) -> list[Burst]:
-        """Bursts whose sender has gone quiet and that have messages the classifier hasn't seen."""
         now = self._clock()
         with self._lock:
             self._flush_locked(now)
@@ -138,7 +100,6 @@ class NotificationInbox:
             ]
 
     def take_unread(self) -> list[Burst]:
-        """Hand over every unread burst and mark it read (it moves to `discarded`)."""
         with self._lock:
             self._flush_locked(self._clock())
             taken, self._recent = self._recent, []
@@ -148,7 +109,6 @@ class NotificationInbox:
             return taken
 
     def older(self, limit: int = 10) -> list[Burst]:
-        """Most recent bursts that already left the recent queue, newest first."""
         with self._lock:
             self._flush_locked(self._clock())
             return list(reversed(self._discarded))[:limit]
@@ -174,10 +134,6 @@ class NotificationInbox:
             self._recent.remove(oldest)
             self._discarded.append(oldest)
 
-
-# ----------------------------------------------------------------------
-# Urgency classification
-# ----------------------------------------------------------------------
 
 URGENCY_SCHEMA = {
     "type": "object",
@@ -205,13 +161,10 @@ judge what it actually says.
 Reply with JSON: {"urgent": true|false, "reason": "<a few words>"}"""
 
 
-# Structured output (Ollama `format`) isn't available for every model/engine.
-# Flipped off on the first refusal so later calls don't pay for a failed request.
 _structured_output_supported = True
 
 
 def _parse_verdict(content: str) -> dict:
-    """Pull the JSON object out of a reply, tolerating text around it."""
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if not match:
         raise ValueError(f"no JSON object in reply: {content[:80]!r}")
@@ -219,7 +172,6 @@ def _parse_verdict(content: str) -> dict:
 
 
 def classify_urgency(burst: Burst, chat_fn: Callable[..., dict], model: str) -> bool:
-    """Ask the LLM whether a burst is urgent. Any failure counts as not urgent (and is logged)."""
     global _structured_output_supported
     lines = "\n".join(f"- {m.text}" for m in burst.messages)
     data = (
@@ -250,10 +202,6 @@ def classify_urgency(burst: Burst, chat_fn: Callable[..., dict], model: str) -> 
         return False
 
 
-# ----------------------------------------------------------------------
-# Spoken summary
-# ----------------------------------------------------------------------
-
 SUMMARY_PROMPT = """You turn phone notifications into what Ifa says out loud to her user, Sir.
 
 For each notification, write exactly ONE short sentence: who it is from and
@@ -279,7 +227,6 @@ Urgent: Mom says Papa fell and wants you to come to the hospital now."""
 
 
 def template_summary(bursts: list[Burst]) -> str:
-    """Deterministic fallback when the LLM summary fails: quote the latest message."""
     lines = []
     for b in bursts:
         latest = next((m.text for m in reversed(b.messages) if m.text), "")
@@ -290,7 +237,6 @@ def template_summary(bursts: list[Burst]) -> str:
 
 
 def summarize_bursts(bursts: list[Burst], chat_fn: Callable[..., dict], model: str) -> str:
-    """One spoken sentence per burst, written by a small focused LLM call."""
     try:
         response = chat_fn(
             model=model,
@@ -309,19 +255,7 @@ def summarize_bursts(bursts: list[Burst], chat_fn: Callable[..., dict], model: s
         return template_summary(bursts)
 
 
-# ----------------------------------------------------------------------
-# Center: receive → classify → announce
-# ----------------------------------------------------------------------
-
 class NotificationCenter:
-    """Owns the inbox and a worker thread that triages settled bursts.
-
-    Announcements are handed to whoever drives speech:
-      - voice mode: the voice loop polls `take_announcement()` when it is
-        idle, so a notification never interrupts an exchange in progress
-      - text mode: the worker announces directly (`on_announce`)
-    """
-
     def __init__(
         self,
         inbox: NotificationInbox,
@@ -336,11 +270,10 @@ class NotificationCenter:
         self.on_announce = on_announce
         self._poll_sec = poll_sec
         self._lock = threading.Lock()
-        self._pending: str | None = None   # "normal" | "urgent"
+        self._pending: str | None = None
         self.announcement_ready = threading.Event()
 
     def receive(self, payload: dict) -> Burst | None:
-        """Accept one notification in the shape the backend sends to /activate."""
         context = payload.get("context") or {}
         if not isinstance(context, dict):
             raise ValueError("`context` must be an object")
@@ -363,20 +296,17 @@ class NotificationCenter:
         return thread
 
     def process_settled(self) -> None:
-        """Classify bursts whose sender went quiet, and queue announcements. One worker tick."""
         for burst in self.inbox.settled():
             burst.classified_count = len(burst.messages)
             if burst.priority == "low":
-                continue  # stored for later, never announced
+                continue
             burst.urgent = self._classify(burst)
             level = "urgent" if burst.urgent else "normal"
-            # Announce once; announce again only if more messages made it urgent.
             if burst.announced is None or (level == "urgent" and burst.announced != "urgent"):
                 burst.announced = level
                 self._queue_announcement(level)
 
     def take_announcement(self) -> str | None:
-        """Return and clear the pending announcement ("urgent" wins over "normal")."""
         with self._lock:
             level, self._pending = self._pending, None
             self.announcement_ready.clear()
@@ -402,7 +332,6 @@ class NotificationCenter:
 
 
 def format_bursts(bursts: list[Burst], now: float | None = None) -> str:
-    """Render bursts for the model: who, which app, how long ago, and the messages."""
     if not bursts:
         return "No notifications."
     now = now if now is not None else time.time()

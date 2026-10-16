@@ -1,5 +1,3 @@
-# ifa/tools/vision_tool.py
-
 from ifa.core.context import AgentContext
 from ifa.skills.vision.vision import VisionSkill
 from ifa.tools.registry import Tool, register

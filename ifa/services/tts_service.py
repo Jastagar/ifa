@@ -1,4 +1,3 @@
-
 import os
 import threading
 import queue
@@ -11,7 +10,6 @@ import io
 os.environ["TQDM_DISABLE"] = "1"
 
 from chatterbox.tts_turbo import ChatterboxTurboTTS
-# from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from blingfire import text_to_sentences
 from rich.console import Console
 
@@ -21,7 +19,6 @@ _console = Console()
 
 class TTSService:
     def __init__(self):
-
         self._lock = threading.Lock()
         self._active_count = 0
         self._mute_until = 0.0
@@ -38,7 +35,7 @@ class TTSService:
             else "cpu"
         )
 
-        
+
         _console.print("PROCESSOR TYPE :",torch.cuda.is_available())
 
         _console.print(
@@ -48,24 +45,14 @@ class TTSService:
         self.model = ChatterboxTurboTTS.from_pretrained(
             device=self.device
         )
-        # self.model = ChatterboxMultilingualTTS.from_pretrained(
-        #     device=self.device
-        # )
 
         self.voice_path = os.environ.get(
             "IFA_VOICE_SAMPLE",
             "ifa/audios/voice.wav"
         )
-        # The producer thread and synthesize() callers (e.g. filler clips
-        # rendering at startup) must not run the model at the same time.
         self._model_lock = threading.Lock()
 
-        # Text generation and audio playback run independently. This lets the
-        # GPU prepare the next sentence/phrase while the speaker is playing
-        # the previous one.
         self._text_queue = queue.Queue()
-        # Buffer enough generated audio to stay ahead of playback for longer
-        # answers without unbounded memory growth.
         self._audio_queue = queue.Queue(maxsize=64)
         self._producer = threading.Thread(target=self._produce_audio, daemon=True)
         self._consumer = threading.Thread(target=self._play_audio, daemon=True)
@@ -74,7 +61,6 @@ class TTSService:
 
     @property
     def is_speaking(self):
-
         with self._lock:
             return (
                 self._active_count > 0
@@ -85,7 +71,6 @@ class TTSService:
         self._stop_event.set()
 
     def enqueue(self, text: str) -> threading.Event | None:
-        """Queue speech without waiting for earlier audio to finish."""
         if not text:
             return None
 
@@ -98,21 +83,14 @@ class TTSService:
         return completed
 
     def speak(self, text: str):
-        """Queue speech and wait for its audio to finish (legacy API)."""
         completed = self.enqueue(text)
         if completed:
             completed.wait()
 
     def synthesize(self, text: str) -> np.ndarray:
-        """Render `text` to audio without playing it (for pre-built clips)."""
         return self._generate(text.strip())
 
     def play_clip(self, audio: np.ndarray, label: str) -> threading.Event:
-        """Play pre-rendered audio, skipping synthesis entirely.
-
-        Goes straight onto the playback queue, so it starts as soon as the
-        speaker is free — ahead of any text still being synthesized.
-        """
         with self._lock:
             self._active_count += 1
         completed = threading.Event()
@@ -186,8 +164,6 @@ class TTSService:
                             time.monotonic() + self._cooldown_sec,
                         )
                     if all_done:
-                        # A filler can drain the queue before the answer arrives,
-                        # so keep the latest idle moment, not the first.
                         latency.current().mark("audio_done", last=True)
                     completed.set()
             finally:

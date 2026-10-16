@@ -1,30 +1,3 @@
-"""Input mode switch for the orchestrator.
-
-Default: text mode (``IFA_MODE`` unset or ``text``). Reads ``input("You: ")``.
-
-Voice mode (``IFA_MODE=voice``): wake-word listener + VAD-gated capture +
-Whisper transcription, running on a background daemon thread so the main
-thread is free to block on ``tts.speak()`` during Ifa's replies without
-starving the mic loop.
-
-Topology::
-
-    main thread                   voice thread (daemon)
-    -----------                   ---------------------
-    input_mode.get()              sounddevice.InputStream (shared)
-      └── queue.get() ─────┐        │
-                           │      ┌─┴── wait_for_wake (1280-sample frames)
-                           │      └── capture_utterance (512-sample frames)
-                           │           └── transcribe_array
-                           └────── queue.put(text)
-    agent_turn(text, ...)
-      └── tts.speak(reply)
-          (is_speaking=True, wake-word thread drops its scores)
-
-On any init failure (mic unavailable, models missing, sounddevice import
-error), we fall back to text mode with a visible notice — voice mode is
-opt-in, crashing the app when it can't start is the wrong move.
-"""
 from __future__ import annotations
 
 import os
@@ -38,19 +11,13 @@ from ifa.utils import latency
 
 
 class _InputMode:
-    """Protocol-ish base: every input mode exposes ``get()`` + ``arm_followup()``.
-
-    ``arm_followup`` is a no-op for text mode, but keeps the orchestrator
-    loop uniform (it calls it after every tts.speak() regardless of mode).
-    """
-
     def get(self) -> str:
         raise NotImplementedError
 
-    def arm_followup(self) -> None:  # pragma: no cover — trivial
+    def arm_followup(self) -> None:
         pass
 
-    def close(self) -> None:  # pragma: no cover — trivial
+    def close(self) -> None:
         pass
 
 
@@ -60,29 +27,12 @@ class _TextMode(_InputMode):
 
 
 class VoiceInput(_InputMode):
-    """Background wake→capture→transcribe loop feeding a thread-safe queue.
-
-    Construct once at orchestrator startup (after ``TTSService``). Each
-    call to ``get()`` blocks until one transcribed utterance arrives.
-    ``close()`` stops the mic stream; the daemon thread exits with the
-    process anyway.
-
-    Follow-up window: after Ifa speaks a reply, the orchestrator calls
-    ``arm_followup()``. For ``IFA_FOLLOWUP_WINDOW_SEC`` seconds
-    afterwards the voice loop skips the wake-word step and goes
-    straight to capture — so a conversational follow-up (“what about
-    tomorrow?”) just works. If the user doesn't speak within that
-    window, the deadline expires and the next turn requires the wake
-    word again.
-    """
-
     def __init__(
         self,
         tts_service: TTSService,
         notifications=None,
         announce_urgent: Optional[Callable[[], None]] = None,
     ) -> None:
-        # Imports are lazy so text-mode users don't pay the voice dep cost.
         import sounddevice as sd
 
         from ifa.voice.capture import CAPTURE_SAMPLES, capture_utterance
@@ -90,10 +40,9 @@ class VoiceInput(_InputMode):
         from ifa.voice.stt import transcribe_array
         from ifa.voice.wake_word import WAKE_CHUNK_SAMPLES, WakeWordListener
 
-        self._tts = tts_service  # stored so capture can wait on is_speaking
+        self._tts = tts_service
         self._notifications = notifications
         self._announce_urgent = announce_urgent
-        # How long to listen (no wake word) after announcing a notification.
         self._notification_listen_sec = float(
             os.environ.get("IFA_NOTIF_LISTEN_SEC", "8")
         )
@@ -113,35 +62,14 @@ class VoiceInput(_InputMode):
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
-        # Follow-up window state
         self._followup_window_sec = float(
             os.environ.get("IFA_FOLLOWUP_WINDOW_SEC", "5")
         )
-        self._followup_until = 0.0  # monotonic deadline; 0 = no follow-up armed
-        # Set by arm_followup() — gates the loop's "wait for main thread to
-        # finish the turn before deciding wake vs follow-up." Without this
-        # the voice loop iterates immediately after queue.put, finds
-        # _followup_until still at 0, and falls into wait_for_wake — the
-        # user then has to say the wake word every turn even when
-        # follow-up is configured.
-        #
-        # Initial state is UNSET because the loop only waits on this
-        # event after a queue.put has actually occurred (tracked by
-        # ``needs_turn_wait`` in ``_run_loop``). Pre-setting it would
-        # cause the second iteration's wait to return immediately and
-        # drop straight into wait_for_wake — defeating the gate.
+        self._followup_until = 0.0
         self._turn_complete = threading.Event()
 
-    # -- public API --
 
     def start(self) -> None:
-        """Spawn the background wake→capture→transcribe daemon thread.
-
-        Kept separate from ``__init__`` so tests can monkey-patch
-        ``_listener.wait_for_wake`` / ``_capture_utterance`` /
-        ``_transcribe`` before the loop sees them. Production code calls
-        ``start()`` right after construction (done by ``init_input``).
-        """
         if self._thread is not None:
             return
         self._thread = threading.Thread(
@@ -150,15 +78,10 @@ class VoiceInput(_InputMode):
         self._thread.start()
 
     def get(self) -> str:
-        """Block until one utterance is transcribed; return its text."""
         return self._queue.get()
 
     def close(self) -> None:
-        """Request the background thread to exit and stop the mic stream."""
         self._stop.set()
-        # Wake up _turn_complete.wait() if the thread is parked there
-        # waiting for a turn that will never come. Without this, the
-        # join below hits its timeout and the thread leaks for ~60s.
         self._turn_complete.set()
         try:
             self._stream.stop()
@@ -169,13 +92,6 @@ class VoiceInput(_InputMode):
             self._thread.join(timeout=0.5)
 
     def arm_followup(self) -> None:
-        """Mark the next capture as follow-up — skip wake-word if within window.
-
-        Called by the orchestrator right after ``tts.speak(reply)`` returns.
-        Also signals the voice thread that the current turn's main-thread
-        processing is complete, so the loop can re-evaluate
-        ``_in_followup_window`` instead of being stuck in ``wait_for_wake``.
-        """
         if self._followup_window_sec > 0:
             self._followup_until = time.monotonic() + self._followup_window_sec
         self._turn_complete.set()
@@ -183,7 +99,6 @@ class VoiceInput(_InputMode):
     def _in_followup_window(self) -> bool:
         return time.monotonic() < self._followup_until
 
-    # -- internals --
 
     def _notification_waiting(self) -> bool:
         return (
@@ -192,16 +107,6 @@ class VoiceInput(_InputMode):
         )
 
     def _wait_for_tts_silence(self) -> bool:
-        """Block (in 50 ms slices) until ``tts.is_speaking`` is False.
-
-        Important for the follow-up path: ``arm_followup()`` is called
-        right after ``tts.speak()`` returns, but ``is_speaking`` stays
-        True through the cooldown window. Without this wait, capture
-        starts while Ifa's own TTS is still being heard by the mic and
-        Whisper transcribes Ifa's own words → infinite self-conversation.
-
-        Returns False if a stop was requested while waiting.
-        """
         while self._tts is not None and self._tts.is_speaking:
             if self._stop.is_set():
                 return False
@@ -209,20 +114,6 @@ class VoiceInput(_InputMode):
         return True
 
     def _drain_stream(self) -> None:
-        """Discard the audio frames currently buffered in the OS mic queue.
-
-        Called right before capture starts. During TTS playback (or any
-        time the voice loop is blocked elsewhere), the mic stream keeps
-        accumulating samples in PortAudio's ring buffer. If we don't
-        drain those, the next capture reads stale audio that may
-        contain Ifa's own voice from a moment ago.
-
-        Single-shot: snapshots ``read_available`` once and discards
-        exactly that many frames. **Looping** until read_available
-        hits zero would never terminate on a live mic — PortAudio
-        feeds in fresh samples continuously and read_available stays
-        non-zero forever, blocking capture.
-        """
         try:
             available = int(self._stream.read_available)
         except Exception:
@@ -235,14 +126,6 @@ class VoiceInput(_InputMode):
             pass
 
     def _maybe_dump_wav(self, audio) -> None:
-        """If IFA_VOICE_DEBUG_WAV is set to a directory, save each captured
-        utterance as a WAV file there so the user can listen and verify
-        what the model is being asked to transcribe.
-
-        Useful when transcription returns empty / wrong: the WAV tells you
-        whether the bug is in capture (audio was wrong) or in STT (audio
-        was right, model returned wrong).
-        """
         out_dir = os.environ.get("IFA_VOICE_DEBUG_WAV")
         if not out_dir:
             return
@@ -259,7 +142,7 @@ class VoiceInput(_InputMode):
                 wf.setframerate(16_000)
                 wf.writeframes(audio_i16.tobytes())
             print(f"[voice] dumped WAV: {path}")
-        except Exception as exc:  # never let debug code break the loop
+        except Exception as exc:
             print(f"[voice] WAV dump failed: {exc}")
 
     def _read_wake_chunk(self):
@@ -271,16 +154,9 @@ class VoiceInput(_InputMode):
         return data[:, 0]
 
     def _run_loop(self) -> None:
-        # True when the previous iteration produced a transcription that
-        # got queued for the main thread. Until the main thread calls
-        # arm_followup() (signalling "TTS reply done"), we must NOT
-        # iterate into wait_for_wake — otherwise the follow-up window
-        # never fires because _followup_until is still 0 at the moment
-        # of the iteration's wake-vs-followup decision.
         needs_turn_wait = False
         while not self._stop.is_set():
             if needs_turn_wait:
-                # Poll in 0.5s slices so close() sees _stop promptly.
                 while not self._stop.is_set():
                     if self._turn_complete.wait(timeout=0.5):
                         break
@@ -290,11 +166,7 @@ class VoiceInput(_InputMode):
                 needs_turn_wait = False
 
             in_followup = self._in_followup_window()
-            # Clear the arm now so a failed/empty follow-up doesn't bleed
-            # into subsequent iterations.
             self._followup_until = 0.0
-            # Checked only here, between exchanges, so a notification never
-            # cuts into a conversation: it waits until the current one ends.
             announcement = (
                 self._notifications.take_announcement() if self._notifications else None
             )
@@ -318,7 +190,7 @@ class VoiceInput(_InputMode):
                     if self._stop.is_set():
                         return
                     if score is None:
-                        continue  # a notification arrived; handle it at the top
+                        continue
                     print("[voice] wake detected — capturing...")
                     capture_kwargs = {}
                 else:
@@ -333,24 +205,15 @@ class VoiceInput(_InputMode):
                         )
                     }
 
-                # Block until Ifa is fully done speaking AND the cooldown
-                # has elapsed; otherwise capture catches her own voice
-                # via mic bleed-through, transcribes it, and triggers a
-                # self-feedback chat loop.
                 if not self._wait_for_tts_silence():
                     return
-                # Acknowledge a wake word or notification, but keep the
-                # conversational follow-up window silent. The cue is played
-                # before draining so it cannot be captured as user speech.
                 if play_cue:
                     self._play_listening_cue()
-                # Discard whatever the OS buffered during TTS / cooldown.
                 self._drain_stream()
 
                 audio = self._capture_utterance(
                     read_chunk=self._read_capture_chunk, **capture_kwargs
                 )
-                # The user stopped talking one VAD silence window ago.
                 silence_ms = int(os.environ.get("IFA_VAD_SILENCE_MS", "1500"))
                 timer = latency.begin(
                     "voice",
@@ -359,9 +222,9 @@ class VoiceInput(_InputMode):
                 )
                 timer.mark("captured")
                 duration = len(audio) / 16_000
-                
+
                 if len(audio):
-                    import numpy as _np  # local — avoid hot-path import on text mode
+                    import numpy as _np
                     peak = float(_np.abs(audio).max())
                     rms = float(_np.sqrt(_np.mean(audio.astype(_np.float32) ** 2)))
                     print(
@@ -376,22 +239,13 @@ class VoiceInput(_InputMode):
                 timer.mark("stt_done")
 
             except BaseException as exc:
-                # BaseException catches test sentinels (which inherit from it)
-                # and propagates SystemExit/KeyboardInterrupt cleanly while
-                # still shielding Exception subclasses from killing the loop.
                 if self._stop.is_set() or not isinstance(exc, Exception):
                     return
-                # Surface but don't kill the thread — a bad frame / transient
-                # device error shouldn't take voice mode down for the session.
                 print(f"[voice] loop error: {exc}")
                 continue
 
             transcribedText = (transcribedText or "").strip()
             if not transcribedText:
-                # VAD fired but Whisper heard nothing intelligible — just go
-                # back to listening; don't confuse the agent with empty input.
-                # No turn was produced, so don't wait for arm_followup —
-                # just iterate and try again immediately.
                 print("[voice] (no speech detected / empty transcript)")
                 continue
             print(f"[voice] heard: {transcribedText!r}")
@@ -404,17 +258,6 @@ def init_input(
     notifications=None,
     announce_urgent: Optional[Callable[[], None]] = None,
 ) -> _InputMode:
-    """Return an ``_InputMode`` object based on ``IFA_MODE``.
-
-    Called once at orchestrator startup. In voice mode, spins up
-    ``VoiceInput`` (which opens the mic + background thread). On any
-    init failure, prints an actionable notice and returns a text-mode
-    stub instead — voice is opt-in, so falling back is correct.
-
-    The returned object exposes ``get()`` (one turn of user input) and
-    ``arm_followup()`` (no-op in text mode; primes the follow-up
-    window in voice mode).
-    """
     mode = os.environ.get("IFA_MODE", "text").lower()
     if mode != "voice":
         print("[voice] mode=text  (set IFA_MODE=voice to use wake-word input)")
@@ -440,9 +283,6 @@ def init_input(
     threshold = voice._listener.threshold
     followup_sec = voice._followup_window_sec
 
-    # Surface the fallback explicitly. Otherwise a missing bundled file
-    # silently degrades the wake-word identity and the user's only
-    # signal is "saying X doesn't trigger anymore."
     if fallback_from:
         wake_display = f"{wake_name} (FALLBACK from missing {fallback_from!r})"
     else:

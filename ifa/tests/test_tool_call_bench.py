@@ -1,24 +1,3 @@
-"""Live tool-call bench — measures the real model's tool choices. NOT run in CI.
-
-test_agent_stream.py checks the loop's plumbing with a scripted fake LLM.
-This bench checks the other half: given Ifa's real system prompt and real
-tool schemas, does the configured model pick the right tools, with valid
-arguments, and chain them when a request needs more than one step?
-
-Sandboxed: every tool keeps its real name/description/schema (that's what
-the model sees), but handlers are swapped for fakes returning canned
-results. Running the bench never sets reminders, writes memory.md, opens
-apps, plays music, or sends WhatsApp messages.
-
-Usage (needs Ollama running and IFA_OLLAMA_MODEL set, e.g. via .env):
-    PYTHONPATH=. venv/bin/python -m ifa.tests.test_tool_call_bench
-    PYTHONPATH=. venv/bin/python -m ifa.tests.test_tool_call_bench --repeat 3
-    PYTHONPATH=. venv/bin/python -m ifa.tests.test_tool_call_bench --only multi_step
-
-Each case is run --repeat times; a case's score is its pass rate across
-runs, because the same prompt can produce different tool calls run to run.
-Exit code is 0 only if every category meets its threshold.
-"""
 import argparse
 import json
 import sys
@@ -30,18 +9,16 @@ from unittest.mock import MagicMock, patch
 
 from dotenv import load_dotenv
 
-# Same rule as ifa/main.py: .env must load before any ifa.* import, because
-# modules read their settings (e.g. IFA_OLLAMA_MODEL) at import time.
 load_dotenv()
 
-from jsonschema import ValidationError, validate  # noqa: E402
+from jsonschema import ValidationError, validate
 
-from ifa.core import agent_stream  # noqa: E402
-from ifa.core.context import AgentContext  # noqa: E402
-from ifa.core.memory import Memory  # noqa: E402
-from ifa.skills.vibe.vibe import VibeManager  # noqa: E402
-from ifa.tools import register_all, registry  # noqa: E402
-from ifa.tools.registry import Tool  # noqa: E402
+from ifa.core import agent_stream
+from ifa.core.context import AgentContext
+from ifa.core.memory import Memory
+from ifa.skills.vibe.vibe import VibeManager
+from ifa.tools import register_all, registry
+from ifa.tools.registry import Tool
 
 
 @dataclass
@@ -53,14 +30,12 @@ class Call:
 @dataclass
 class BenchCase:
     utterance: str
-    expected: list[str]  # tool names; [] = should answer directly
+    expected: list[str]
     category: str
-    ordered: bool = False  # True when step 2 depends on step 1's result
-    # Extra check on the recorded calls, e.g. "did step 2 use step 1's output?"
+    ordered: bool = False
     check: Callable[[list[Call]], bool] | None = field(default=None, repr=False)
 
 
-# What each fake tool "returns". Multi-step cases rely on these values.
 FAKE_RESULTS = {
     "get_time": "Current time is 14:05",
     "analyze_screen": "VS Code is open showing a TypeError in orchestrator.py on line 40.",
@@ -78,60 +53,48 @@ def _task_mentions(word: str) -> Callable[[list[Call]], bool]:
 
 
 BENCH: list[BenchCase] = [
-    # get_time — deterministic, should always be selected
     BenchCase("what time is it?", ["get_time"], "get_time"),
     BenchCase("can you tell me the current time?", ["get_time"], "get_time"),
     BenchCase("hey what's the clock say", ["get_time"], "get_time"),
     BenchCase("do you know what time it is right now", ["get_time"], "get_time"),
 
-    # set_reminder — varied timeframes
     BenchCase("remind me to stretch in 30 seconds", ["set_reminder"], "set_reminder"),
     BenchCase("set a reminder to call mom in 2 minutes", ["set_reminder"], "set_reminder"),
     BenchCase("in 10 seconds, remind me to take my pills", ["set_reminder"], "set_reminder"),
     BenchCase("remind me about the meeting in 5 minutes", ["set_reminder"], "set_reminder"),
 
-    # remember — the tool is for explicit requests; passing mentions are not stored
     BenchCase("remember that my cat is named Luna", ["remember"], "remember"),
     BenchCase("note down that I work remotely on Thursdays", ["remember"], "remember"),
     BenchCase("please remember I prefer tea over coffee", ["remember"], "remember"),
     BenchCase("I'm tired today", [], "direct_response"),
     BenchCase("it's raining outside", [], "direct_response"),
 
-    # call_n8n_workflow
     BenchCase("trigger my home_summary workflow", ["call_n8n_workflow"], "call_n8n_workflow"),
     BenchCase("run the quick_ping workflow please", ["call_n8n_workflow"], "call_n8n_workflow"),
     BenchCase("fire off my morning_routine automation", ["call_n8n_workflow"], "call_n8n_workflow"),
 
-    # open_app
     BenchCase("open vs code", ["open_app"], "open_app"),
     BenchCase("open youtube in the browser", ["open_app"], "open_app"),
 
-    # spotify_control
     BenchCase("play some lofi on spotify", ["spotify_control"], "spotify_control"),
     BenchCase("pause the music", ["spotify_control"], "spotify_control"),
     BenchCase("skip this song", ["spotify_control"], "spotify_control"),
 
-    # switch_mode
     BenchCase("turn on the vibe", ["switch_mode"], "switch_mode"),
     BenchCase("switch back to normal mode", ["switch_mode"], "switch_mode"),
 
-    # analyze_screen
     BenchCase("what error is on my screen?", ["analyze_screen"], "analyze_screen"),
     BenchCase("read this popup for me", ["analyze_screen"], "analyze_screen"),
 
-    # launch_game
     BenchCase("launch valorant", ["launch_game"], "launch_game"),
     BenchCase("start minecraft", ["launch_game"], "launch_game"),
 
-    # whats_app
     BenchCase("send john a whatsapp saying I'll be late", ["whats_app"], "whats_app"),
 
-    # direct response — no tool
     BenchCase("how are you today?", [], "direct_response"),
     BenchCase("thanks!", [], "direct_response"),
     BenchCase("ok got it", [], "direct_response"),
 
-    # multi_step — needs more than one tool in a single turn
     BenchCase(
         "look at my screen and remind me in 10 minutes to fix whatever error is there",
         ["analyze_screen", "set_reminder"], "multi_step", ordered=True,
@@ -150,15 +113,15 @@ BENCH: list[BenchCase] = [
 THRESHOLDS = {
     "get_time": 1.00,
     "set_reminder": 0.75,
-    "remember": 0.66,  # ⅔ — 0.67 would fail a 2-of-3 score (0.666…)
-    "call_n8n_workflow": 0.66,  # ⅔ — 0.67 would fail a 2-of-3 score (0.666…)
+    "remember": 0.66,
+    "call_n8n_workflow": 0.66,
     "open_app": 0.75,
     "spotify_control": 0.75,
     "switch_mode": 0.75,
     "analyze_screen": 0.75,
     "launch_game": 0.75,
     "whats_app": 0.75,
-    "direct_response": 0.66,  # ⅔ — 0.67 would fail a 2-of-3 score (0.666…)
+    "direct_response": 0.66,
     "multi_step": 0.50,
     "aggregate": 0.75,
     "valid_args": 0.95,
@@ -166,7 +129,6 @@ THRESHOLDS = {
 
 
 def _sandbox_tools() -> None:
-    """Register every real tool, then swap each handler for a canned fake."""
     register_all()
     for tool in registry.all_tools():
         result = FAKE_RESULTS.get(tool.name, DEFAULT_FAKE_RESULT)
@@ -190,7 +152,6 @@ def _args_valid(call: Call) -> bool:
 
 
 def _run_case(case: BenchCase) -> dict:
-    """Run one full agent turn and record every tool call the model made."""
     calls: list[Call] = []
     real_stream_chat = agent_stream.stream_chat
 
@@ -229,9 +190,8 @@ def _run_case(case: BenchCase) -> dict:
 
 
 def run_bench(repeat: int = 1, only: str | None = None) -> dict:
-    """Run every bench case `repeat` times and return a structured summary."""
     _sandbox_tools()
-    VibeManager(MagicMock())  # the system prompt reads the current vibe
+    VibeManager(MagicMock())
 
     cases = [c for c in BENCH if only is None or c.category == only]
     results = [_run_case(case) for case in cases for _ in range(repeat)]

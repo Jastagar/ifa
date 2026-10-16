@@ -1,19 +1,3 @@
-"""`call_n8n_workflow` tool — outbound webhook POST to user-configured n8n workflows.
-
-Configuration lives in `ifa/config/n8n_workflows.yaml` (gitignored; a
-template `.example` file is committed). Each workflow has a URL and
-optional auth (with env-var credential refs), timeout, and payload JSON
-Schema.
-
-Security posture (R17/R18):
-- Response body truncated to 2KB before the agent loop delimits it
-- LLM-supplied payload is validated against the workflow's `payload_schema`;
-  default is an empty-properties object with `additionalProperties: false`
-  (LLM can only send {} unless the workflow explicitly declares fields)
-- Auth secret resolved at call time from environment; never stored in the
-  agent message list or memory; system prompt instructs the LLM not to
-  echo authentication values from tool results
-"""
 import os
 from pathlib import Path
 
@@ -34,17 +18,10 @@ DEFAULT_PAYLOAD_SCHEMA: dict = {
 
 
 class N8nConfigError(Exception):
-    """Raised when the n8n YAML config can't be parsed or has invalid shape."""
+    pass
 
 
 def load_n8n_config(path: str | Path) -> dict:
-    """Load and validate the n8n workflows YAML.
-
-    Returns a dict `{workflow_name: {url, auth?, timeout?, payload_schema?}}`.
-    Missing file returns an empty dict (Ifa boots with no workflows — any
-    `call_n8n_workflow` call errors gracefully). YAML parse errors or
-    structural problems raise N8nConfigError with an actionable message.
-    """
     path = Path(path)
     if not path.exists():
         return {}
@@ -71,7 +48,6 @@ def load_n8n_config(path: str | Path) -> dict:
     if not isinstance(workflows, dict):
         raise N8nConfigError("`workflows` must be a mapping of name → config.")
 
-    # Validate each workflow
     normalized = {}
     for name, config in workflows.items():
         if not isinstance(config, dict):
@@ -84,10 +60,6 @@ def load_n8n_config(path: str | Path) -> dict:
 
 
 def _resolve_auth_header(auth_config: dict) -> tuple[str, str] | None:
-    """Return (header_name, header_value) or None if no auth is configured.
-
-    Raises ValueError if the auth block is malformed or the env var is unset.
-    """
     auth_type = auth_config.get("type")
     if auth_type == "header":
         header_name = auth_config.get("name")
@@ -99,7 +71,6 @@ def _resolve_auth_header(auth_config: dict) -> tuple[str, str] | None:
             raise ValueError(f"env var `{env_var}` is not set")
         return header_name, value
     if auth_type == "basic":
-        # Not supported in Stage 1 — keep the schema extensible but reject clearly
         raise ValueError("basic auth not supported in Stage 1; use type=header")
     raise ValueError(f"unknown auth type `{auth_type}`")
 
@@ -122,14 +93,12 @@ def _handler(args: dict, ctx: AgentContext) -> str:
             f"Available: {sorted(ctx.n8n_config.keys()) or 'none'}"
         )
 
-    # Validate payload against the workflow's schema (defense: R18)
     schema = workflow.get("payload_schema", DEFAULT_PAYLOAD_SCHEMA)
     try:
         validate(instance=payload, schema=schema)
     except ValidationError as exc:
         return f"Payload rejected by schema for workflow `{workflow_name}`: {exc.message}"
 
-    # Resolve auth header (if configured)
     headers = {}
     auth_config = workflow.get("auth")
     if auth_config is not None:
@@ -156,7 +125,6 @@ def _handler(args: dict, ctx: AgentContext) -> str:
     except httpx.HTTPError as exc:
         return f"Workflow `{workflow_name}` failed: {exc}"
 
-    # Truncate before returning — prevents context-window pollution
     body = response.text
     print(f"Response Text: {body}")
     if len(body.encode("utf-8")) > MAX_RESPONSE_BYTES:

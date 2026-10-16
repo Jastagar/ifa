@@ -1,7 +1,3 @@
-"""Tests for ifa.services.ollama_client.
-
-Run: python -m unittest ifa.tests.test_ollama_client -v
-"""
 import unittest
 import os
 from unittest.mock import MagicMock, patch
@@ -19,7 +15,6 @@ from ifa.services.ollama_client import (
 MODEL = os.environ.get("IFA_OLLAMA_MODEL", "test-model")
 
 def _mock_response(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
-    """Fabricate an httpx.Response with json() + raise_for_status()."""
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.json.return_value = json_data or {}
@@ -33,8 +28,6 @@ def _mock_response(status_code: int = 200, json_data: dict | None = None) -> Mag
 
 
 class BuildToolResultMessageTests(unittest.TestCase):
-    """Ollama's spec uses `tool_name`, not `name`. Lock this in."""
-
     def test_returns_expected_shape(self):
         msg = build_tool_result_message("get_time", "12:00pm")
         self.assertEqual(msg, {"role": "tool", "tool_name": "get_time", "content": "12:00pm"})
@@ -107,7 +100,6 @@ class StreamChatTests(unittest.TestCase):
         return patch("ifa.services.ollama_client.httpx.stream", return_value=ctx)
 
     def test_requests_streaming(self):
-        """Without stream=True the first sentence waits for the whole reply."""
         with self._stream([]) as stream:
             list(stream_chat(MODEL, [{"role": "user", "content": "hi"}]))
         self.assertTrue(stream.call_args.kwargs["json"]["stream"])
@@ -138,7 +130,7 @@ class CheckHealthTests(unittest.TestCase):
                    return_value=self._mock_tags([f"{self.MODEL}-q4_K_M"])), \
              patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})):
-            check_health(self.MODEL)  # must not raise
+            check_health(self.MODEL)
 
     def test_ollama_not_running(self):
         with patch("ifa.services.ollama_client.httpx.get",
@@ -156,7 +148,6 @@ class CheckHealthTests(unittest.TestCase):
         self.assertIn(f"ollama pull {self.MODEL}", str(cm.exception))
 
     def test_tool_calling_not_supported(self):
-        """Ollama responds to /api/tags but rejects /api/chat with tools."""
         def post_fails_on_chat(url, **kwargs):
             if url.endswith("/api/chat"):
                 return _mock_response(400, {"error": "tools not supported"})
@@ -171,12 +162,11 @@ class CheckHealthTests(unittest.TestCase):
         self.assertIn("tool-calling", str(cm.exception).lower())
 
     def test_model_prefix_match(self):
-        """check_health accepts any tag starting with the required prefix."""
         with patch("ifa.services.ollama_client.httpx.get",
                    return_value=self._mock_tags([f"{self.MODEL}-q8_0"])), \
              patch("ifa.services.ollama_client.httpx.post",
                    return_value=_mock_response(200, {"message": {"content": "ok"}})):
-            check_health(self.MODEL)  # must not raise
+            check_health(self.MODEL)
 
     def test_empty_model_list(self):
         with patch("ifa.services.ollama_client.httpx.get",

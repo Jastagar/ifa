@@ -1,4 +1,3 @@
-
 from ifa.config.settings import OLLAMA_MODEL
 from ifa.services.ollama_client import chat
 from ifa.skills.vision.prompt import SYSTEM_PROMPT
@@ -6,7 +5,6 @@ from ifa.skills.vision.screen_capture import ScreenCaptureService
 
 
 class VisionSkill:
-
     def __init__(self):
         self._capture = ScreenCaptureService()
         self._model = OLLAMA_MODEL

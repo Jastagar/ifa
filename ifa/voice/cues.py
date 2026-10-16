@@ -1,4 +1,3 @@
-"""Small, non-speech audio cues used by voice mode."""
 from __future__ import annotations
 
 import os
@@ -12,12 +11,6 @@ _LISTENING_CUE_PATH = Path(__file__).resolve().parent.parent / "audios" / "wakes
 
 
 def play_listening_cue() -> None:
-    """Play the bundled wake sound to acknowledge that Ifa is listening.
-
-    Set ``IFA_LISTENING_CUE=0`` to silence the cue. Audio failures are
-    deliberately non-fatal: voice capture must keep working even when the
-    output device is unavailable or busy.
-    """
     if os.environ.get("IFA_LISTENING_CUE", "1").lower() in {"0", "false", "no", "off"}:
         return
 

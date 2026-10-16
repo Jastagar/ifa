@@ -1,7 +1,3 @@
-"""Tests for ifa.services.tts_service.TTSService.
-
-Run: python -m unittest ifa.tests.test_tts_service -v
-"""
 import ast
 import base64
 import os
@@ -14,7 +10,6 @@ from ifa.services.tts_service import TTSService
 
 
 def _mock_tempfile():
-    """Patch tempfile so tests never touch the real filesystem."""
     return patch(
         "ifa.services.tts_service.tempfile.mkstemp",
         return_value=(9999, "/tmp/fake_ifa_tts.aiff"),
@@ -53,7 +48,6 @@ class TTSServiceDispatchTests(unittest.TestCase):
         self.assertEqual(say_cmd[2], afplay_cmd[1])
 
     def test_darwin_uses_argv_separator_for_text_starting_with_dash(self):
-        """Text starting with `-` must not be interpreted as a `say` flag."""
         tts = TTSService()
         close_patch, unlink_patch = _mock_os_close_and_unlink()
         with patch("ifa.services.tts_service.sys.platform", "darwin"), \
@@ -82,8 +76,6 @@ class TTSServiceDispatchTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["IFA_TTS_TEXT"], "hello")
 
     def test_windows_injection_payload_does_not_appear_in_command(self):
-        """Newlines and PowerShell metacharacters in text must not leak
-        into the command string."""
         tts = TTSService()
         payload = "innocent\n; Start-Process calc"
         with patch("ifa.services.tts_service.sys.platform", "win32"), \
@@ -163,18 +155,11 @@ class TTSServiceThreadSafetyTests(unittest.TestCase):
 
 
 class TTSServiceIsSpeakingTests(unittest.TestCase):
-    """Unit 1 (Stage 2): `is_speaking` flag + cooldown for voice mute.
-
-    The wake-word listener (Unit 2) reads `is_speaking` on every audio
-    frame; these tests lock in the semantics it depends on.
-    """
-
     def test_is_speaking_false_at_construction(self):
         tts = TTSService()
         self.assertFalse(tts.is_speaking)
 
     def test_is_speaking_true_during_subprocess_call(self):
-        """While subprocess.run is executing, is_speaking must be True."""
         tts = TTSService()
         observed = []
 
@@ -189,7 +174,6 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         self.assertEqual(observed, [True])
 
     def test_is_speaking_true_during_cooldown_window(self):
-        """Right after speak() returns, is_speaking stays True (cooldown)."""
         tts = TTSService()
         with patch("ifa.services.tts_service.subprocess.run"), patch(
             "ifa.services.tts_service.sys.platform", "linux"
@@ -211,18 +195,10 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         ):
             tts.speak("hello")
             self.assertTrue(tts.is_speaking)
-            # advance past default 500ms cooldown
             clock[0] += 1.0
             self.assertFalse(tts.is_speaking)
 
     def test_rapid_back_to_back_speak_no_false_window(self):
-        """Regression guard for the threading.Timer race.
-
-        Two speak() calls in quick succession must never produce a window
-        where is_speaking == False between them. This is the specific
-        race the monotonic-timestamp design eliminates vs. the
-        Timer + cancel() alternative.
-        """
         tts = TTSService()
         clock = [1000.0]
 
@@ -236,19 +212,16 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         ):
             tts.speak("first")
             self.assertTrue(tts.is_speaking)
-            # advance 100ms -- well within 500ms cooldown
             clock[0] += 0.1
             self.assertTrue(tts.is_speaking)
             tts.speak("second")
             self.assertTrue(tts.is_speaking)
-            # advance another 400ms: past first call's expiry, within second's
             clock[0] += 0.4
             self.assertTrue(tts.is_speaking)
 
     def test_concurrent_speak_from_two_threads_both_tracked(self):
-        """Reminder-thread speak() + main-thread speak() both keep mute on."""
         tts = TTSService()
-        enter_barrier = threading.Barrier(3)  # 2 threads + main test thread
+        enter_barrier = threading.Barrier(3)
         release_gate = threading.Event()
         observations = []
         obs_lock = threading.Lock()
@@ -266,7 +239,6 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
             t2 = threading.Thread(target=lambda: tts.speak("reminder"))
             t1.start()
             t2.start()
-            # Sync: both threads reached fake_run with _active_count == 2
             enter_barrier.wait(timeout=2.0)
             release_gate.set()
             t1.join(timeout=2.0)
@@ -277,7 +249,6 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         self.assertEqual(observations, [True, True])
 
     def test_cooldown_extends_across_back_to_back_calls(self):
-        """Back-to-back speak() calls monotonically extend _mute_until."""
         tts = TTSService()
         clock = [1000.0]
 
@@ -291,13 +262,12 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         ):
             tts.speak("first")
             first_mute_until = tts._mute_until
-            clock[0] += 0.2  # advance 200ms
+            clock[0] += 0.2
             tts.speak("second")
             second_mute_until = tts._mute_until
             self.assertGreater(second_mute_until, first_mute_until)
 
     def test_speak_exception_still_sets_cooldown(self):
-        """If subprocess.run raises, finally block still arms the cooldown."""
         tts = TTSService()
         with patch(
             "ifa.services.tts_service.subprocess.run",
@@ -308,22 +278,12 @@ class TTSServiceIsSpeakingTests(unittest.TestCase):
         self.assertEqual(tts._active_count, 0)
 
     def test_cooldown_honors_env_var(self):
-        """IFA_TTS_COOLDOWN_MS overrides the default cooldown."""
         with patch.dict(os.environ, {"IFA_TTS_COOLDOWN_MS": "2000"}):
             tts = TTSService()
         self.assertAlmostEqual(tts._cooldown_sec, 2.0, places=4)
 
 
 class OrchestratorImportsAgentTurnTests(unittest.TestCase):
-    """Replaces the legacy ManagerDecouplingTests after the Stage 1 cleanup.
-
-    Stage 0's manager.py and core/brain.py have been deleted; the
-    orchestrator now drives turns through ``agent_turn`` from
-    ``ifa.core.agent``. This guard catches any future regression
-    where someone re-introduces a manager-style routing layer
-    upstream of agent_turn.
-    """
-
     def test_orchestrator_imports_agent_turn_from_core_agent(self):
         orch_path = pathlib.Path(__file__).parent.parent / "core" / "orchestrator.py"
         tree = ast.parse(orch_path.read_text())
@@ -344,8 +304,6 @@ class OrchestratorImportsAgentTurnTests(unittest.TestCase):
         )
 
     def test_no_lingering_imports_of_deleted_modules(self):
-        """brain.py and skills/manager.py were deleted in Unit 7 — make
-        sure nothing reintroduces an import."""
         ifa_root = pathlib.Path(__file__).parent.parent
         bad_imports: list[tuple[str, int, str]] = []
         for py_file in ifa_root.rglob("*.py"):

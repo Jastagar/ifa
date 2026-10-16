@@ -1,7 +1,3 @@
-"""Tests for adapter tools: get_time, set_reminder, and (Unit 4) remember_fact.
-
-Run: python -m unittest ifa.tests.test_tools_adapters -v
-"""
 import os
 import sqlite3
 import tempfile
@@ -21,8 +17,6 @@ def _make_ctx(db_path: str = ":memory:") -> AgentContext:
 class GetTimeToolTests(unittest.TestCase):
     def setUp(self):
         registry.clear()
-        # Import and explicitly re-register (module-level register() only fires
-        # once when first imported; subsequent imports are cached)
         from ifa.tools.time import TOOL
         registry.register(TOOL)
 
@@ -34,7 +28,6 @@ class GetTimeToolTests(unittest.TestCase):
 
     def test_returns_time_string(self):
         result = registry.dispatch("get_time", {}, _make_ctx())
-        # Matches the existing TimeSkill output format "Current time is HH:MM"
         self.assertIn("Current time is", result)
 
     def test_schema_allows_empty_args(self):
@@ -52,10 +45,8 @@ class SetReminderToolTests(unittest.TestCase):
         from ifa.tools.reminder import TOOL
         registry.register(TOOL)
 
-        # Use a real temp SQLite DB so the schedule() call can actually insert
         fd, self.db_path = tempfile.mkstemp(suffix=".db", prefix="ifa_test_")
         os.close(fd)
-        # Create the reminders table (matches ifa/services/db.py schema)
         conn = sqlite3.connect(self.db_path)
         conn.execute(
             "CREATE TABLE reminders (id INTEGER PRIMARY KEY, task TEXT, trigger_time INTEGER)"
@@ -120,8 +111,6 @@ class SetReminderToolTests(unittest.TestCase):
 
 
 class ReminderSkillScheduleTests(unittest.TestCase):
-    """Direct tests of the new ReminderSkill.schedule() method added in Unit 3."""
-
     def setUp(self):
         fd, self.db_path = tempfile.mkstemp(suffix=".db", prefix="ifa_test_")
         os.close(fd)
@@ -158,11 +147,9 @@ class ReminderSkillScheduleTests(unittest.TestCase):
         self.assertIn("greater than zero", result.lower())
 
     def test_schedule_fires_tts_after_delay(self):
-        """Integration: the daemon thread calls tts.speak() after `seconds` elapses."""
         from ifa.skills.reminder import ReminderSkill
 
         tts = MagicMock()
-        # seconds=1 is the minimum the schema accepts; use time.sleep to wait for fire
         ReminderSkill(tts, db_path=self.db_path).schedule("ping", 1)
         time.sleep(1.5)
         tts.speak.assert_called_once()

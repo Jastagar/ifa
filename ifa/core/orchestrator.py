@@ -1,19 +1,3 @@
-"""Main loop: read user input, run agent turn, speak response.
-
-Stage 1 replaces the old `extract_fact → detect_intent → handle_with_intent
-→ think → speak` chain with a single `agent_turn(user_text, ctx, memory)`
-call. Tools (get_time, set_reminder, remember_fact, call_n8n_workflow) are
-registered at startup and dispatched by the agent loop.
-
-Startup order is load-bearing:
-  1. Health-check Ollama (fail fast with actionable message)
-  2. Load n8n config (graceful if missing; errors out on YAML syntax problems)
-  3. init_db (WAL mode, schema retrofit)
-  4. Construct TTSService + AgentContext
-  5. register_all() tools
-  6. resume_reminders() — reminder daemons can now fire via the same TTS
-  7. Enter main loop
-"""
 import pathlib
 import os
 import sqlite3
@@ -54,8 +38,6 @@ CONTACTS = {
 }
 
 
-# How long silence may last before a filler clip covers it. Below ~600 ms a
-# pause still feels like natural turn-taking; much past ~800 ms it feels broken.
 FILLER_DELAY_SEC = int(os.environ.get("IFA_FILLER_DELAY_MS", "650")) / 1000
 
 
@@ -68,17 +50,9 @@ def run_turn(
     executor: ThreadPoolExecutor,
     filler_delay: float = FILLER_DELAY_SEC,
 ) -> latency.TurnTimer:
-    """Run one agent turn, covering a slow answer with at most one filler clip.
-
-    The filler plays as soon as the model calls a tool (we know another LLM
-    round is coming) or once `filler_delay` passes with no answer sentence —
-    whichever comes first. It never plays once the answer has started.
-    """
     timer = latency.claim_or_begin("text")
     answer_started = threading.Event()
     filler_played = False
-    # Makes "has the answer started?" + "queue speech" one atomic step, so a
-    # filler can never be queued after an answer sentence.
     speech_order = threading.Lock()
 
     def play_filler(tool_names: list[str] | None = None) -> None:
@@ -91,7 +65,7 @@ def run_turn(
                 return
             phrase, audio = choice
             filler_played = True
-            timer.filler_text = phrase  # set before playback so TTFS ignores it
+            timer.filler_text = phrase
             timer.mark("filler_queued")
             print(f"Ifa: ({phrase})")
             ctx.tts.play_clip(audio, phrase)
@@ -112,7 +86,6 @@ def run_turn(
 
 
 def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
-    """Print the turn's latency breakdown once all of its speech has played."""
     speech_queue.wait_until_empty()
     while tts.is_speaking:
         time.sleep(0.05)
@@ -120,7 +93,6 @@ def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> Non
 
 
 def resume_reminders(tts: TTSService, db_path: str) -> None:
-    """Re-arm any reminders persisted in SQLite. Called once at startup."""
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     now = int(time.time())
@@ -149,7 +121,6 @@ def resume_reminders(tts: TTSService, db_path: str) -> None:
 def run() -> None:
     print("Orchestrator running...")
 
-    # 1. Ollama health check (fail fast)
     if not MODEL:
         print(
             "\n❌ IFA_OLLAMA_MODEL is not set. Add it to .env, for example: "
@@ -163,7 +134,6 @@ def run() -> None:
         print(f"\n❌ {exc}\n", file=sys.stderr)
         sys.exit(1)
 
-    # 2. n8n config load (graceful if missing; hard error on syntax issues)
     try:
         n8n_config = load_n8n_config(N8N_CONFIG_PATH)
     except N8nConfigError as exc:
@@ -175,7 +145,6 @@ def run() -> None:
     else:
         print(f"No n8n workflows configured (expected at {N8N_CONFIG_PATH}).")
 
-    # 3-5. DB init, TTS, register tools
     init_db()
     tts = TTSService()
     speech_queue = SpeechQueue(
@@ -195,12 +164,9 @@ def run() -> None:
     )
     register_all()
 
-    # 6. Restore reminders BEFORE entering the main loop
     resume_reminders(tts, DB_PATH)
 
-    # 7. Initialize input mode (text default; IFA_MODE=voice opts in)
     def announce_urgent() -> None:
-        """Say the urgent line (pre-rendered if ready) and wait until it's spoken."""
         audio = fillers.clip(URGENT_ANNOUNCEMENT)
         if audio is not None:
             done = tts.play_clip(audio, URGENT_ANNOUNCEMENT)
@@ -211,7 +177,6 @@ def run() -> None:
 
     input_mode = init_input(tts, notifications, announce_urgent)
     if not isinstance(input_mode, VoiceInput):
-        # Text mode has no voice loop polling for announcements: announce directly.
         def announce_in_text_mode(level: str) -> None:
             print("\n🔔 New notification. Ask 'what is it?' to hear it.")
             if level == "urgent":
@@ -220,10 +185,8 @@ def run() -> None:
         notifications.on_announce = announce_in_text_mode
     notifications.start()
 
-    # getting vibes ready:
     VibeManager(tts)
 
-    # 8. Main loop
     memory = Memory()
 
     def on_sentence(sentence: str):
@@ -237,9 +200,6 @@ def run() -> None:
         user_input = input_mode.get().strip()
         if not user_input:
             continue
-        # Echo so you can see what voice mode heard before agent_turn runs.
-        # Cheap in text mode (you typed it), but critical for debugging
-        # voice transcription issues.
         print(f"You: {user_input}")
         if user_input.lower() in ["exit", "quit"]:
             break
@@ -248,6 +208,4 @@ def run() -> None:
         threading.Thread(
             target=_report_when_quiet, args=(timer, speech_queue, tts), daemon=True
         ).start()
-        # Arm the follow-up window: in voice mode, the next utterance
-        # within ~5s skips the wake word; text mode is a no-op.
         input_mode.arm_followup()

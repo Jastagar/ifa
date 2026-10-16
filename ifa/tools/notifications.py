@@ -1,14 +1,3 @@
-"""`read_notifications` tool — the only way notification text reaches the model.
-
-Going through a tool (instead of pasting notifications into the prompt) keeps
-third-party text out of the main conversation and tells us exactly when a
-notification was read.
-
-It is a terminal tool (return_direct): a focused summarizer writes one
-sentence per notification and that is spoken as-is. Letting the main model
-rephrase it brought back offers to reply, extra sentences, and "if I'm free"
-instead of "if you're free".
-"""
 from ifa.core.context import AgentContext
 from ifa.tools.registry import Tool, register
 

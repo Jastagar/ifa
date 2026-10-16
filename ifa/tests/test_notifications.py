@@ -1,7 +1,3 @@
-"""Tests for notification grouping, queues, triage, and the read_notifications tool.
-
-Run: python -m unittest ifa.tests.test_notifications -v
-"""
 import json
 import unittest
 from unittest.mock import MagicMock
@@ -70,7 +66,7 @@ class InboxTests(unittest.TestCase):
     def test_burst_settles_only_after_sender_goes_quiet(self):
         _add(self.inbox, text="Hi")
         self.clock.advance(3)
-        _add(self.inbox, text="you there?")  # resets the quiet period
+        _add(self.inbox, text="you there?")
         self.clock.advance(3)
         self.assertEqual(self.inbox.settled(), [])
         self.clock.advance(1)
@@ -156,7 +152,7 @@ class CenterTests(unittest.TestCase):
         self.receive(body="Hi")
         self.receive(body="Free tonight?")
         self.center.process_settled()
-        self.assertEqual(self.classified, [])  # sender hasn't gone quiet yet
+        self.assertEqual(self.classified, [])
         self.settle()
         self.settle()
         self.assertEqual(self.classified, [["Hi", "Free tonight?"]])
@@ -231,7 +227,6 @@ class ClassifyUrgencyTests(unittest.TestCase):
 
         self.assertTrue(classify_urgency(self._burst("come to the hospital"), chat, "m"))
         self.assertNotIn("format", chat.call_args_list[1].kwargs)
-        # Remembered: the next call goes straight to prompt-only JSON.
         self.assertTrue(classify_urgency(self._burst("again"), chat, "m"))
         self.assertEqual(chat.call_count, 3)
         self.assertNotIn("format", chat.call_args_list[2].kwargs)

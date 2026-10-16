@@ -1,4 +1,3 @@
-"""Regression tests for connected phrase-level TTS synthesis."""
 import threading
 import unittest
 from unittest.mock import MagicMock, patch

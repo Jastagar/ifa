@@ -1,10 +1,3 @@
-"""Tests for ifa.voice.input.VoiceInput + init_input.
-
-sounddevice, openWakeWord, Silero VAD, and Whisper are all mocked so
-tests run without real audio hardware or model files.
-
-Run: PYTHONPATH=. python -m unittest ifa.tests.test_voice_input -v
-"""
 import os
 import queue
 import sys
@@ -17,17 +10,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 
-# ---------- fake module installers ----------
-
-
 def _install_fake_sounddevice() -> MagicMock:
     fake = types.ModuleType("sounddevice")
     stream = MagicMock(name="InputStream_instance")
-    # default: return zero-valued chunks for any read size
     stream.read.side_effect = lambda n: (np.zeros((n, 1), dtype=np.float32), False)
-    # ``read_available`` is a real int property on PortAudio streams; the
-    # production drain loop reads it. Set it to 0 so _drain_stream exits
-    # immediately in tests without spinning.
     stream.read_available = 0
     stream_cls = MagicMock(name="InputStream_class", return_value=stream)
     fake.InputStream = stream_cls
@@ -61,16 +47,13 @@ def _uninstall_fake_openwakeword() -> None:
 
 
 def _install_fake_whisper() -> MagicMock:
-    """Replace faster_whisper.WhisperModel with a mock for the STT module."""
     fake = types.ModuleType("faster_whisper")
     instance = MagicMock(name="whisper_inst")
-    # default: return ("hi",) segments + info
     segments = [types.SimpleNamespace(text=" hi")]
     instance.transcribe.side_effect = lambda *_a, **_k: (iter(segments), types.SimpleNamespace())
     cls = MagicMock(name="WhisperModel", return_value=instance)
     fake.WhisperModel = cls
     sys.modules["faster_whisper"] = fake
-    # Force the STT module's lazy cache to reload
     import ifa.voice.stt as stt
     stt._model = None
     return cls
@@ -88,9 +71,6 @@ class _FakeTTS:
         return False
 
 
-# ---------- init_input tests ----------
-
-
 class InitInputTests(unittest.TestCase):
     def test_text_mode_is_default(self):
         from ifa.voice.input import _TextMode, init_input
@@ -105,13 +85,10 @@ class InitInputTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"IFA_MODE": "text"}):
             mode = init_input(tts_service=_FakeTTS())
-        # Must not raise — orchestrator calls this after every turn.
         mode.arm_followup()
         self.assertTrue(hasattr(mode, "get"))
 
     def test_voice_mode_init_failure_falls_back_to_text(self):
-        """If VoiceInput init raises (e.g. no mic), we return the text
-        mode stub rather than crashing the orchestrator."""
         from ifa.voice.input import _TextMode, init_input
 
         with patch.dict(os.environ, {"IFA_MODE": "voice"}), \
@@ -120,18 +97,7 @@ class InitInputTests(unittest.TestCase):
         self.assertIsInstance(mode, _TextMode)
 
 
-# ---------- VoiceInput tests (real class, mocked deps) ----------
-
-
 class VoiceInputTests(unittest.TestCase):
-    """Exercise VoiceInput with every external dep mocked.
-
-    NOTE: VoiceInput spawns a daemon thread on construction. Tests
-    should keep that thread well-scripted (mock ``wait_for_wake``,
-    ``capture_utterance``, ``transcribe_array``) so it does not block
-    indefinitely on unmocked mic reads.
-    """
-
     def setUp(self) -> None:
         self.sd_cls = _install_fake_sounddevice()
         self.ow_cls, self.ow_inst = _install_fake_openwakeword()
@@ -143,16 +109,6 @@ class VoiceInputTests(unittest.TestCase):
         _uninstall_fake_sounddevice()
 
     def _make_voice_input(self, *, wake_returns=None, capture_audio=None, transcript="hi"):
-        """Construct a VoiceInput whose inner components are MagicMocks.
-
-        Overrides the per-instance callables BEFORE starting the daemon
-        thread, so the loop picks up mocks from iteration zero.
-
-        - wake_returns: list of values to return from wait_for_wake; after
-          exhaustion, raises to end the loop.
-        - capture_audio: numpy array returned by capture_utterance.
-        - transcript: string returned by transcribe_array.
-        """
         from ifa.voice.input import VoiceInput
 
         if wake_returns is None:
@@ -169,7 +125,6 @@ class VoiceInputTests(unittest.TestCase):
                 raise _LoopStop()
 
         vi = VoiceInput(tts_service=_FakeTTS())
-        # Replace before start() so the daemon thread never sees unmocked deps.
         vi._listener.wait_for_wake = fake_wait
         vi._capture_utterance = MagicMock(return_value=capture_audio)
         vi._transcribe = MagicMock(return_value=transcript)
@@ -188,14 +143,11 @@ class VoiceInputTests(unittest.TestCase):
             vi.close()
 
     def test_empty_transcript_is_not_queued(self):
-        """VAD fired but Whisper returned nothing → loop back, don't
-        surface an empty string to the agent."""
         vi = self._make_voice_input(
-            wake_returns=[0.9, 0.9],  # two wake events
+            wake_returns=[0.9, 0.9],
             transcript="",
         )
         try:
-            # After 0.2s, still empty — queue stays empty
             time.sleep(0.2)
             with self.assertRaises(queue.Empty):
                 vi._queue.get(timeout=0.1)
@@ -203,8 +155,6 @@ class VoiceInputTests(unittest.TestCase):
             vi.close()
 
     def test_loop_exception_does_not_kill_thread(self):
-        """A transient per-turn error shouldn't take voice mode down
-        for the rest of the session."""
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())
@@ -248,27 +198,11 @@ class VoiceInputTests(unittest.TestCase):
 
 
 class _LoopStop(BaseException):
-    """Sentinel used to end the daemon loop in tests without blocking.
-
-    Inherits from BaseException (not Exception) so VoiceInput's
-    ``except BaseException`` branch lets it propagate and exit the
-    thread cleanly — and, critically, no "loop error:" log is emitted.
-    """
-
-
-# ---------- Orchestrator plumbing test ----------
+    pass
 
 
 class OrchestratorInitInputIntegrationTests(unittest.TestCase):
-    """Smoke-check that orchestrator.run wires init_input correctly.
-
-    Only the plumbing path is exercised: agent_turn and check_health are
-    mocked out, and the input mode is a canned stub.
-    """
-
     def test_orchestrator_uses_input_mode_and_arms_followup_each_turn(self):
-        """orchestrator.run must (a) call init_input(tts), (b) loop on
-        input_mode.get(), (c) call arm_followup() after every tts.speak()."""
         from ifa.core import orchestrator
 
         inputs = iter(["hello", "exit"])
@@ -292,14 +226,10 @@ class OrchestratorInitInputIntegrationTests(unittest.TestCase):
 
         self.assertEqual(len(init_input_calls), 1)
         self.assertIs(init_input_calls[0], tts_cls.return_value)
-        # arm_followup was called once — after the one real turn ("hello"),
-        # NOT after the "exit" command (that short-circuits the loop).
         self.assertEqual(fake_mode.arm_followup.call_count, 1)
 
 
 class VoiceInputFollowupTests(unittest.TestCase):
-    """Exercise the follow-up-window behavior that skips wake-word after a reply."""
-
     def setUp(self) -> None:
         self.sd_cls = _install_fake_sounddevice()
         self.ow_cls, self.ow_inst = _install_fake_openwakeword()
@@ -333,23 +263,21 @@ class VoiceInputFollowupTests(unittest.TestCase):
             vi.close()
 
     def test_followup_bypasses_wake_word_and_passes_start_timeout(self):
-        """When armed, the loop skips wait_for_wake and calls capture
-        with ``start_timeout_ms`` matching the follow-up window."""
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())
         vi._followup_window_sec = 5.0
-        vi.arm_followup()  # arm BEFORE starting thread
+        vi.arm_followup()
 
         wait_called = [False]
         def fake_wait(read_chunk):
             wait_called[0] = True
-            raise _LoopStop()  # should NOT be called in follow-up path
+            raise _LoopStop()
 
         capture_kwargs_seen = {}
         def fake_capture(read_chunk, **kwargs):
             capture_kwargs_seen.update(kwargs)
-            raise _LoopStop()  # end after first capture
+            raise _LoopStop()
 
         vi._listener.wait_for_wake = fake_wait
         vi._capture_utterance = fake_capture
@@ -363,20 +291,14 @@ class VoiceInputFollowupTests(unittest.TestCase):
             vi.close()
 
     def test_capture_blocks_until_tts_is_silent(self):
-        """Self-feedback fix: capture must NOT start while Ifa is still
-        speaking (or in cooldown), otherwise it transcribes her own
-        voice via mic bleed-through and triggers an infinite chat loop.
-        """
         from ifa.voice.input import VoiceInput
 
-        # TTS is_speaking starts True, becomes False after a beat
         class _SpeakingThenSilentTTS:
             def __init__(self):
                 self._calls = 0
             @property
             def is_speaking(self):
                 self._calls += 1
-                # First few polls = still speaking; then silent
                 return self._calls < 3
 
         speaking_tts = _SpeakingThenSilentTTS()
@@ -387,40 +309,29 @@ class VoiceInputFollowupTests(unittest.TestCase):
             capture_started_at_call[0] = speaking_tts._calls
             raise _LoopStop()
 
-        vi._listener.wait_for_wake = lambda read_chunk: None  # immediate wake
+        vi._listener.wait_for_wake = lambda read_chunk: None
         vi._capture_utterance = fake_capture
         vi._transcribe = MagicMock(return_value="")
         vi.start()
         vi._thread.join(timeout=2.0)
         try:
-            # Capture must have started AFTER the polls that returned True
             self.assertIsNotNone(capture_started_at_call[0])
             self.assertGreaterEqual(capture_started_at_call[0], 3)
         finally:
             vi.close()
 
     def test_voice_loop_waits_for_arm_followup_before_next_decision(self):
-        """Race fix: voice thread must wait for the main thread to call
-        arm_followup() (or hit the 60s timeout) before it iterates back
-        and decides wake-vs-followup. Without this, voice loops back to
-        wait_for_wake immediately after queue.put, finds
-        _followup_until=0, and gets stuck — the user has to say the
-        wake word every turn instead of the follow-up window firing.
-        """
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())
 
-        # First iteration: wake fires, capture+transcribe runs, queue.put
-        # Second iteration: should NOT proceed until arm_followup or close.
         wait_started_iteration_2 = threading.Event()
 
         iteration_count = [0]
         def fake_wait_for_wake(read_chunk):
             iteration_count[0] += 1
             if iteration_count[0] == 1:
-                return 0.9  # success — capture will run after this
-            # Iteration 2 should never reach here unless arm_followup fires
+                return 0.9
             wait_started_iteration_2.set()
             raise _LoopStop()
 
@@ -429,31 +340,18 @@ class VoiceInputFollowupTests(unittest.TestCase):
         vi._transcribe = MagicMock(return_value="hello")
         vi.start()
         try:
-            # Pull the first turn's transcription
             self.assertEqual(vi.get(), "hello")
-            # Voice thread is now parked at _turn_complete.wait().
-            # wait_for_wake should NOT have been called for iteration 2.
             time.sleep(0.2)
             self.assertFalse(
                 wait_started_iteration_2.is_set(),
                 "voice loop iterated to wait_for_wake without waiting for arm_followup",
             )
-            # Now arm follow-up: this should release the wait, AND because
-            # _followup_until is in the future, the next iteration goes
-            # to follow-up mode (skips wait_for_wake), so iteration 2's
-            # wait_for_wake is still NOT called.
             vi.arm_followup()
             time.sleep(0.2)
-            # The follow-up branch raises _LoopStop via fake_capture below.
-            # But we set arm_followup so the wait released; _in_followup_window
-            # was True; capture branch was taken; capture returned "hello"
-            # again (mocked), queue.put, loop iterates, waits again on event.
         finally:
             vi.close()
 
     def test_arm_followup_releases_blocked_voice_thread_via_event(self):
-        """``arm_followup`` must set the turn_complete event even if it
-        also sets the deadline (so a follow-up=0 config still releases)."""
         from ifa.voice.input import VoiceInput
 
         with patch.dict(os.environ, {"IFA_FOLLOWUP_WINDOW_SEC": "0"}):
@@ -467,13 +365,10 @@ class VoiceInputFollowupTests(unittest.TestCase):
             vi.close()
 
     def test_drain_stream_called_before_each_capture(self):
-        """Audio buffered during TTS / cooldown must be discarded so
-        capture reads fresh real-time audio, not stale Ifa-voice."""
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())
 
-        # Track call order: drain should fire BEFORE capture.
         order: list[str] = []
         original_drain = vi._drain_stream
         def spy_drain():
@@ -496,7 +391,6 @@ class VoiceInputFollowupTests(unittest.TestCase):
             vi.close()
 
     def test_listening_cue_plays_before_capture(self):
-        """The acknowledgement cue must finish before microphone capture."""
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())
@@ -520,7 +414,6 @@ class VoiceInputFollowupTests(unittest.TestCase):
             vi.close()
 
     def test_followup_capture_is_silent(self):
-        """The cue acknowledges a wake word, not every conversational turn."""
         from ifa.voice.input import VoiceInput
 
         vi = VoiceInput(tts_service=_FakeTTS())

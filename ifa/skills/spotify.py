@@ -1,5 +1,3 @@
-# ifa/skills/spotify.py
-
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 

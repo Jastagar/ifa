@@ -1,7 +1,3 @@
-"""Tests for filler clips: which phrase is chosen, and when run_turn plays one.
-
-Run: python -m unittest ifa.tests.test_fillers -v
-"""
 import random
 import threading
 import time
@@ -42,7 +38,7 @@ class ChooseTests(unittest.TestCase):
         self.assertTrue(all(a != b for a, b in zip(picks, picks[1:])))
 
     def test_nothing_rendered_yet_means_no_filler(self):
-        fillers = Fillers(synthesize=lambda text: "audio")  # never prepared
+        fillers = Fillers(synthesize=lambda text: "audio")
         self.assertIsNone(fillers.choose())
         self.assertIsNone(fillers.choose(["get_time"]))
 
@@ -58,10 +54,8 @@ class ChooseTests(unittest.TestCase):
 
 
 class RunTurnFillerTests(unittest.TestCase):
-    """run_turn with a scripted agent: when does a filler play, and in what order?"""
-
     def setUp(self):
-        self.spoken: list[str] = []  # everything that reached TTS, in order
+        self.spoken: list[str] = []
         self.tts = MagicMock()
         self.tts.play_clip.side_effect = lambda audio, label: self.spoken.append(f"filler:{label}")
         self.ctx = AgentContext(tts=self.tts, db_path=":memory:")
@@ -100,7 +94,7 @@ class RunTurnFillerTests(unittest.TestCase):
             on_tool_calls(["get_time"])
             if self.spoken:
                 played_before_delay.set()
-            time.sleep(0.2)  # well past filler_delay: the generic one must not also play
+            time.sleep(0.2)
             on_sentence("It's 3 PM.")
 
         self.run_turn(agent)
@@ -109,7 +103,7 @@ class RunTurnFillerTests(unittest.TestCase):
 
     def test_no_filler_once_the_answer_has_started(self):
         def agent(text, ctx, memory, on_sentence, on_tool_calls):
-            on_sentence("Let me check.")  # model spoke a preamble first
+            on_sentence("Let me check.")
             on_tool_calls(["get_time"])
             on_sentence("It's 3 PM.")
 

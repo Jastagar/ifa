@@ -1,5 +1,3 @@
-# ifa/tools/spotify_tool.py
-
 from ifa.core.context import AgentContext
 from ifa.skills.spotify import SpotifySkill
 from ifa.tools.registry import Tool, register

@@ -29,7 +29,6 @@ class TimeSkill:
 
 
 class Application:
-
     def __init__(self, tts):
         self.tts = tts
 

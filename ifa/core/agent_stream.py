@@ -24,12 +24,7 @@ def load_memories() -> str:
     return MEMORY_FILE.read_text(encoding="utf-8").strip()
 MODEL = OLLAMA_MODEL
 
-# How many rounds of tool calls one user turn may make before the model must
-# answer in plain text. Each round is a full LLM call, so this is also a
-# latency budget: 3 rounds ≈ 4 model calls worst case.
 MAX_TOOL_HOPS = 3
-# Submit each completed model sentence immediately. The TTS producer runs
-# independently from playback and can pre-generate every available sentence.
 SPEECH_BATCH_SENTENCES = 1
 SPEECH_BATCH_CHARS = 220
 
@@ -58,7 +53,6 @@ def _new_nonce() -> str:
 
 
 def _extract_chunks(buffer: str):
-
     matches = list(
         re.finditer(r'[^.!?]+[.!?]', buffer)
     )
@@ -75,13 +69,10 @@ def _extract_chunks(buffer: str):
 
     remaining = buffer[last_end:]
 
-    # fallback flush for long running text
     if len(remaining.split()) >= 12:
-
         split_idx = remaining.rfind(" ")
 
         if split_idx > 0:
-
             completed.append(
                 remaining[:split_idx].strip()
             )
@@ -92,18 +83,12 @@ def _extract_chunks(buffer: str):
 
 
 def _flush_speech_batch(parts: list[str], on_sentence) -> None:
-    """Send a short multi-sentence phrase to TTS as one natural utterance."""
     if parts and on_sentence:
         on_sentence(" ".join(parts))
     parts.clear()
 
 
 def _notification_hint(ctx: AgentContext) -> str:
-    """A count of unread notifications, so "what is it?" has something to refer to.
-
-    Only the count — no sender or text. Notification content is untrusted
-    and reaches the model solely through the read_notifications tool.
-    """
     unread = ctx.notifications.inbox.unread_count() if ctx.notifications else 0
     if not unread:
         return ""
@@ -127,13 +112,6 @@ def _stream_assistant_message(
     allow_tools: bool,
     on_sentence,
 ) -> tuple[dict, list[str]]:
-    """Stream one assistant response and emit full phrase batches early.
-
-    If the text starts imitating a tool result (it contains the tool-result
-    marker), speech stops at once and the message comes back flagged
-    ``fabricated``: real tool results only ever come from the loop, so that
-    content is invented and must never be read out.
-    """
     full_text = ""
     fabricated = False
     sentence_buffer = ""
@@ -149,7 +127,7 @@ def _stream_assistant_message(
         if first_chunk_ms is None:
             first_chunk_ms = timer.now_ms()
         if chunk.get("done"):
-            final_chunk = chunk  # carries Ollama's prefill/decode timing stats
+            final_chunk = chunk
         message = chunk.get("message") or {}
         tool_calls.extend(message.get("tool_calls") or [])
         content = message.get("content") or ""
@@ -195,13 +173,6 @@ def _tool_call_errors(tool_calls: list[dict]) -> list[str]:
 def _append_tool_results(
     messages: list[dict], tool_calls: list[dict], ctx: AgentContext, nonce: str
 ) -> list[tuple[str, str]]:
-    """Dispatch every tool call and append one delimited result per call.
-
-    Every call gets a result, even when an earlier one failed: the assistant
-    message we just appended promised N calls, so the model must see N
-    results. Errors are results too — the model reads them on the next hop
-    and can retry or explain. Returns (tool name, raw result) per call.
-    """
     results = []
     for tool_call in tool_calls:
         function = tool_call["function"]
@@ -216,12 +187,11 @@ def _append_tool_results(
 
 
 def _direct_answer(results: list[tuple[str, str]]) -> str | None:
-    """The spoken answer if every tool called was a terminal tool and succeeded."""
     tools = [registry.get(name) for name, _ in results]
     if not all(tool is not None and tool.return_direct for tool in tools):
         return None
     if any(result.startswith("ERROR") for _, result in results):
-        return None  # let the model see the error and recover
+        return None
     return "\n".join(result for _, result in results)
 
 
@@ -237,14 +207,6 @@ def agent_turn_stream(
     on_sentence=None,
     on_tool_calls=None,
 ) -> str:
-
-    """Run one user turn as a ReAct loop: think → act (tools) → observe → repeat.
-
-    The model may call tools for up to MAX_TOOL_HOPS rounds, seeing each
-    round's results before deciding the next step. On the final round tools
-    are withheld, so the model has to answer with what it has learned rather
-    than the loop giving up.
-    """
     nonce = _new_nonce()
     messages = _build_messages(user_text, ctx, memory, nonce)
     tool_hops = 0
@@ -260,7 +222,6 @@ def agent_turn_stream(
             return "I hit a problem talking to the language model."
 
         if assistant_msg.pop("fabricated"):
-            # Don't keep the invented text in the history; ask for a real call.
             if not retries_remaining:
                 return "I couldn't figure out how to do that."
             retries_remaining -= 1
@@ -286,7 +247,6 @@ def agent_turn_stream(
                 return "I couldn't figure out how to do that."
             tool_hops += 1
             if on_tool_calls:
-                # Tools mean at least one more LLM round before the answer.
                 on_tool_calls([tc["function"]["name"] for tc in tool_calls])
             messages.append(assistant_msg)
             results = _append_tool_results(messages, tool_calls, ctx, nonce)

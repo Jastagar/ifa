@@ -3,7 +3,6 @@ from ifa.skills.vision.captured import Screenshot
 import mss
 
 class ScreenCaptureService:
-
     def __init__(self, monitor: int = 1):
         self._sct = mss.mss()
         self._monitor = monitor

@@ -1,7 +1,3 @@
-"""Startup tests for the orchestrator: fail fast on Ollama / n8n config errors.
-
-Run: python -m unittest ifa.tests.test_orchestrator_stage1 -v
-"""
 import unittest
 from unittest.mock import patch
 
@@ -9,8 +5,6 @@ from ifa.tools import registry
 
 
 class StartupIntegrationTests(unittest.TestCase):
-    """Verify orchestrator startup wires Ollama check, n8n config, DB, tools."""
-
     def setUp(self):
         registry.clear()
 

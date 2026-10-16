@@ -1,11 +1,3 @@
-"""Regression tests for the streaming agent loop.
-
-The LLM is replaced by a scripted fake: each test lists the replies the
-"model" gives on each call, then asserts what the loop did with them.
-This tests the loop's plumbing (hops, budgets, the tool-message protocol)
-deterministically — whether the real model *chooses* well is the job of
-test_tool_call_bench.py.
-"""
 import copy
 import unittest
 from unittest.mock import MagicMock, patch
@@ -28,15 +20,11 @@ def _calls(*calls: tuple[str, dict]) -> list[dict]:
 
 
 class ScriptedLLM:
-    """Stands in for stream_chat. Replays one scripted reply per call and
-    records a snapshot of what the loop sent each time."""
-
     def __init__(self, *replies):
         self._replies = list(replies)
         self.requests: list[dict] = []
 
     def __call__(self, model, messages, tools=None, **_):
-        # Snapshot: the loop keeps appending to the same list after this call.
         self.requests.append({"messages": copy.deepcopy(messages), "tools": tools})
         if not self._replies:
             raise AssertionError("LLM called more times than scripted")
@@ -60,7 +48,6 @@ class AgentLoopTestCase(unittest.TestCase):
     def setUp(self):
         registry.clear()
         self.ctx = AgentContext(tts=MagicMock(), db_path=":memory:", n8n_config={})
-        # Keep the system prompt independent of vibe state and ./memory.md.
         for target, value in [
             ("ifa.core.agent_stream.VibeManager.get_system_based_on_vibe", ""),
             ("ifa.core.agent_stream.load_memories", ""),
@@ -81,7 +68,6 @@ class AgentLoopTestCase(unittest.TestCase):
 
 class DirectResponseTests(AgentLoopTestCase):
     def test_direct_response_submits_each_sentence_without_waiting(self):
-        """Every available sentence reaches the independent TTS pipeline."""
         spoken = []
         llm = ScriptedLLM([
             {"message": {"content": "Hello there. "}},
@@ -98,7 +84,6 @@ class DirectResponseTests(AgentLoopTestCase):
 
 class MultiHopTests(AgentLoopTestCase):
     def test_second_tool_call_sees_first_tool_result(self):
-        """The core of ReAct: act, observe the result, then decide the next act."""
         order = []
         registry.register(_tool("look", lambda a, c: order.append("look") or "the tab says ERROR 404"))
         registry.register(_tool("remind", lambda a, c: order.append("remind") or "reminder set"))
@@ -113,13 +98,10 @@ class MultiHopTests(AgentLoopTestCase):
         self.assertEqual(result, "I set a reminder about the 404.")
         self.assertEqual(order, ["look", "remind"])
         self.assertEqual(len(llm.requests), 3)
-        # Hop 2 was decided with hop 1's result in view.
         self.assertIn("ERROR 404", _tool_messages(llm.requests[1])[0]["content"])
-        # Tools stay available while under budget.
         self.assertTrue(all(r["tools"] for r in llm.requests))
 
     def test_tool_calls_are_announced_before_they_run(self):
-        """Lets the orchestrator play "Checking the time." while the tool runs."""
         events = []
         registry.register(_tool("get_time", lambda a, c: events.append("ran") or "3 PM"))
         llm = ScriptedLLM(_calls(("get_time", {})), _text("It's 3 PM."))
@@ -157,7 +139,6 @@ class MultiHopTests(AgentLoopTestCase):
 
 class ToolProtocolTests(AgentLoopTestCase):
     def test_every_tool_call_gets_a_result_even_after_a_failure(self):
-        """N tool calls in the assistant message must be answered by N tool messages."""
         ran = []
         registry.register(_tool("broken", lambda a, c: 1 / 0))
         registry.register(_tool("fine", lambda a, c: ran.append("fine") or "fine result"))
@@ -193,8 +174,6 @@ class ToolProtocolTests(AgentLoopTestCase):
 
 
 class TerminalToolTests(AgentLoopTestCase):
-    """return_direct tools: their result is the spoken answer, no second LLM round."""
-
     def _terminal(self, name, handler):
         tool = _tool(name, handler)
         tool.return_direct = True
@@ -203,7 +182,7 @@ class TerminalToolTests(AgentLoopTestCase):
     def test_terminal_tool_result_is_spoken_without_another_llm_call(self):
         registry.register(self._terminal("read_notifications", lambda a, c: "Joe wants to know if you're free tonight."))
         spoken = []
-        llm = ScriptedLLM(_calls(("read_notifications", {})))  # only one reply scripted
+        llm = ScriptedLLM(_calls(("read_notifications", {})))
 
         result = self.run_turn(llm, "What is it?", spoken=spoken)
 
@@ -227,11 +206,9 @@ class TerminalToolTests(AgentLoopTestCase):
 
 
 class FabricatedToolResultTests(AgentLoopTestCase):
-    """A model that types out a fake tool result must never be read aloud."""
-
     FAKE = [
         {"message": {"content": "I'll check. "}},
-        {"message": {"content": "<TOOL"}},  # marker split across chunks
+        {"message": {"content": "<TOOL"}},
         {"message": {"content": "_RESULT_abc_START tool=read_notifications>Report due at 5 PM. "}},
         {"message": {"content": "Joe says hi.<TOOL_RESULT_abc_END>"}},
     ]
@@ -256,7 +233,6 @@ class FabricatedToolResultTests(AgentLoopTestCase):
 
 class BudgetTests(AgentLoopTestCase):
     def test_final_hop_withholds_tools_so_model_must_answer(self):
-        """A model stuck calling tools is forced to answer, not cut off."""
         calls = []
         registry.register(_tool("again", lambda a, c: calls.append(1) or "more"))
         hops = agent_stream.MAX_TOOL_HOPS
@@ -273,7 +249,6 @@ class BudgetTests(AgentLoopTestCase):
         self.assertIsNone(llm.requests[-1]["tools"])
 
     def test_tool_calls_on_the_final_hop_are_ignored(self):
-        """Even if a model emits a call with no tools offered, nothing executes."""
         calls = []
         registry.register(_tool("again", lambda a, c: calls.append(1) or "more"))
         hops = agent_stream.MAX_TOOL_HOPS

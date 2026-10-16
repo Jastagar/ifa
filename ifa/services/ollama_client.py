@@ -1,10 +1,3 @@
-"""Thin HTTP client for Ollama's /api/chat and /api/tags endpoints.
-
-Stage 1 uses Ollama's native tool-calling (tools=[...]) via /api/chat rather
-than the subprocess CLI. Tool-result messages use the `tool_name` field per
-Ollama's spec (not `name`). The helper `build_tool_result_message` isolates
-that spec quirk so callers don't drift from it.
-"""
 import httpx
 import json
 import base64
@@ -15,11 +8,6 @@ from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_THINK, MAIN_OLLAMA_URL
 DEFAULT_TIMEOUT = 60.0
 
 def build_tool_result_message(tool_name: str, content: str) -> dict:
-    """Build a tool-role message for Ollama's /api/chat.
-
-    Ollama's spec uses `tool_name` as the field identifying which tool
-    produced the result. Not `name` (OpenAI-style) — keeping them distinct.
-    """
     return {"role": "tool", "tool_name": tool_name, "content": content}
 
 def stream_chat(
@@ -29,15 +17,6 @@ def stream_chat(
     think: bool = OLLAMA_THINK,
     timeout: float = DEFAULT_TIMEOUT,
 ):
-    """
-    Stream chat chunks from Ollama's /api/chat endpoint.
-
-    Yields parsed JSON chunks as Ollama produces them: content arrives a few
-    tokens at a time, a tool call arrives whole in a single chunk, and the
-    final chunk (``done: true``) carries the timing stats. Streaming is what
-    lets the first sentence reach TTS while the rest is still generating.
-    """
-
     payload: dict = {
         "model": model,
         "messages": messages,
@@ -55,11 +34,9 @@ def stream_chat(
         json=payload,
         timeout=timeout,
     ) as response:
-
         response.raise_for_status()
 
         for line in response.iter_lines():
-
             if not line:
                 continue
 
@@ -74,15 +51,6 @@ def chat(
     images: list[Image.Image] | None = None,
     format: dict | None = None,
 ) -> dict:
-    """
-    POST to /api/chat and return the parsed response.
-
-    If `images` is supplied, they are attached to the last user message.
-    If `format` (a JSON Schema) is supplied, Ollama constrains decoding so
-    the reply is JSON matching it — structured output, no parsing guesswork.
-    """
-
-    # Don't mutate the caller's messages
     messages = [message.copy() for message in messages]
 
     if images:
@@ -96,7 +64,6 @@ def chat(
                 base64.b64encode(buffer.getvalue()).decode("utf-8")
             )
 
-        # Attach images to the last user message
         for message in reversed(messages):
             if message["role"] == "user":
                 message["images"] = encoded_images
@@ -128,17 +95,6 @@ def chat(
     return response.json()
 
 def check_health(required_model: str) -> None:
-    """Verify Ollama is running, the model is pulled, and tool-calling works.
-
-    Three checks in sequence:
-      1. /api/tags responds (Ollama is running)
-      2. a model whose name starts with `required_model` is present
-      3. a minimal POST to /api/chat with a tools payload succeeds
-         (proves this Ollama version actually accepts tool-calling)
-
-    Raises RuntimeError with an actionable message on any failure.
-    """
-    # Check 1+2: list tags, verify model present
     try:
         tags_response = httpx.get(f"{MAIN_OLLAMA_URL}/api/tags", timeout=5.0)
         tags_response.raise_for_status()
@@ -161,8 +117,6 @@ def check_health(required_model: str) -> None:
             f"(Ollama reported these models: {model_names or 'none'})"
         )
 
-    # Check 3: conformance probe — POST /api/chat with tools to verify
-    # Ollama actually accepts the tool-calling payload shape.
     probe_tool = {
         "type": "function",
         "function": {
@@ -179,7 +133,6 @@ def check_health(required_model: str) -> None:
             timeout=30.0,
         )
     except httpx.HTTPStatusError as exc:
-        # 4xx/5xx suggests the tools payload shape is rejected.
         raise RuntimeError(
             f"Ollama accepted a connection but rejected a tool-calling request "
             f"(status {exc.response.status_code}). Your Ollama version may be "

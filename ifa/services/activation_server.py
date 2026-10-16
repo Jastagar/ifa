@@ -1,4 +1,3 @@
-"""Local HTTP activation endpoint for an already-running Ifa instance."""
 from __future__ import annotations
 
 import json
@@ -14,7 +13,6 @@ def start_activation_server(
     port: int | None = None,
     token: str | None = None,
 ) -> ThreadingHTTPServer:
-    """Start the local activation listener in a daemon thread."""
     host = host or os.environ.get("IFA_API_HOST", "127.0.0.1")
     port = port or int(os.environ.get("IFA_API_PORT", "8787"))
     token = token if token is not None else os.environ.get("IFA_API_TOKEN", "")

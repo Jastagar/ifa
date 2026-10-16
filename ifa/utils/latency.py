@@ -1,21 +1,3 @@
-"""Per-turn latency instrumentation: where does the time go before Ifa speaks?
-
-One ``TurnTimer`` follows a turn across threads: the voice thread starts it
-when capture ends, the agent loop records each LLM call, and the TTS threads
-record synthesis and the moment audio first reaches the speaker. When the
-turn's speech has finished, the orchestrator prints a breakdown.
-
-All times are milliseconds since t0 = the moment the user finished talking.
-In voice mode that is earlier than capture ending — VAD waits
-IFA_VAD_SILENCE_MS of silence before it decides the user is done — so the
-wait shows up as its own line instead of being hidden.
-
-Headline metric: ``first_answer_audio`` — time to first speech (TTFS) of the
-actual answer. ``first_audio`` may be earlier when a filler clip plays.
-
-Set IFA_LATENCY_LOG=path.jsonl to also append each turn as one JSON line,
-for p50/p90 over many turns.
-"""
 from __future__ import annotations
 
 import json
@@ -43,7 +25,6 @@ class TurnTimer:
         return round((time.perf_counter() - self.t0) * 1000)
 
     def mark(self, name: str, last: bool = False) -> None:
-        """Record when `name` happened: the first time by default, or the latest with last=True."""
         with self._lock:
             if last:
                 self.marks[name] = self.now_ms()
@@ -52,8 +33,7 @@ class TurnTimer:
 
     def record_llm(self, kind: str, started_ms: int, first_chunk_ms: int | None,
                    final_chunk: dict, tool_calls: int) -> None:
-        """Store one LLM request, using the timing stats Ollama returns on its last chunk."""
-        ns_to_ms = lambda key: round(final_chunk.get(key, 0) / 1e6)  # noqa: E731
+        ns_to_ms = lambda key: round(final_chunk.get(key, 0) / 1e6)
         out_tokens = final_chunk.get("eval_count", 0)
         decode_ms = ns_to_ms("eval_duration")
         with self._lock:
@@ -75,7 +55,6 @@ class TurnTimer:
             self.tts_segments.append({"chars": chars, "synth_ms": synth_ms, "audio_ms": audio_ms})
 
     def audio_started(self, text: str) -> None:
-        """Called by the TTS player when an utterance's first samples hit the speaker."""
         self.mark("first_audio")
         if text != self.filler_text:
             self.mark("first_answer_audio")
@@ -101,8 +80,6 @@ class TurnTimer:
 
 
 class _NullTimer(TurnTimer):
-    """Used when no turn is active (e.g. a reminder speaking). Records nothing."""
-
     def __init__(self) -> None:
         super().__init__("none")
 
@@ -116,7 +93,6 @@ _NULL = _NullTimer()
 
 
 def begin(origin: str, t0: float | None = None, vad_wait_ms: int = 0) -> TurnTimer:
-    """Start timing a new turn and make it the current one."""
     global _current
     timer = TurnTimer(origin, t0, vad_wait_ms)
     with _lock:
@@ -125,7 +101,6 @@ def begin(origin: str, t0: float | None = None, vad_wait_ms: int = 0) -> TurnTim
 
 
 def claim_or_begin(origin: str) -> TurnTimer:
-    """Take the timer the voice thread started for this turn, or start one (text mode)."""
     with _lock:
         timer = _current
         if timer is not None and not timer.claimed:

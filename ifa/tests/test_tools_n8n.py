@@ -1,7 +1,3 @@
-"""Tests for ifa.tools.n8n (call_n8n_workflow tool + load_n8n_config).
-
-Run: python -m unittest ifa.tests.test_tools_n8n -v
-"""
 import os
 import pathlib
 import subprocess
@@ -25,8 +21,6 @@ def _mock_response(status_code: int = 200, text: str = "ok") -> MagicMock:
     resp.text = text
     return resp
 
-
-# ==================== load_n8n_config ====================
 
 class LoadConfigTests(unittest.TestCase):
     def test_missing_file_returns_empty(self):
@@ -80,9 +74,8 @@ workflows:
 
     def test_yaml_syntax_error_raises(self):
         from ifa.tools.n8n import load_n8n_config, N8nConfigError
-        # Tab indentation inside a block is a real YAML syntax error
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("workflows:\n\tbad: {]\n")  # tab + mismatched braces
+            f.write("workflows:\n\tbad: {]\n")
             path = f.name
         try:
             with self.assertRaises(N8nConfigError) as cm:
@@ -117,17 +110,14 @@ workflows:
     def test_empty_file_returns_empty(self):
         from ifa.tools.n8n import load_n8n_config, N8nConfigError
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("")  # empty file — yaml.safe_load returns None
+            f.write("")
             path = f.name
         try:
-            # Empty file yields None → our handler treats missing workflows as error
             with self.assertRaises(N8nConfigError):
                 load_n8n_config(path)
         finally:
             os.unlink(path)
 
-
-# ==================== call_n8n_workflow tool ====================
 
 class CallWorkflowToolTests(unittest.TestCase):
     def setUp(self):
@@ -162,7 +152,7 @@ class CallWorkflowToolTests(unittest.TestCase):
             ctx,
         )
         self.assertIn("No workflow named", result)
-        self.assertIn("ping", result)  # lists what IS available
+        self.assertIn("ping", result)
 
     def test_auth_header_resolved_from_env(self):
         ctx = _ctx({
@@ -188,7 +178,6 @@ class CallWorkflowToolTests(unittest.TestCase):
                 "auth": {"type": "header", "name": "X-API-Key", "env": "NONEXISTENT_VAR_XYZ"},
             }
         })
-        # Ensure the env var isn't accidentally set
         env = {k: v for k, v in os.environ.items() if k != "NONEXISTENT_VAR_XYZ"}
         with patch.dict(os.environ, env, clear=True):
             result = registry.dispatch(
@@ -229,14 +218,10 @@ class CallWorkflowToolTests(unittest.TestCase):
                 ctx,
             )
         self.assertIn("truncated", result)
-        # Result is ~2KB of x's plus status line + truncation note, not 5KB
         self.assertLess(len(result), 3000)
 
     def test_payload_schema_default_is_restrictive(self):
-        """Workflow with no payload_schema → empty-props + additionalProperties:false
-        → LLM can only send empty payload."""
         ctx = _ctx({"strict": {"url": "https://example.com"}})
-        # Sending extra fields should be rejected by the default schema
         result = registry.dispatch(
             "call_n8n_workflow",
             {"workflow_name": "strict", "payload": {"sneaky": "field"}},
@@ -256,7 +241,6 @@ class CallWorkflowToolTests(unittest.TestCase):
                 },
             }
         })
-        # Missing required field
         result = registry.dispatch(
             "call_n8n_workflow",
             {"workflow_name": "typed", "payload": {}},
@@ -288,13 +272,11 @@ class CallWorkflowToolTests(unittest.TestCase):
         ctx = _ctx({})
         result = registry.dispatch(
             "call_n8n_workflow",
-            {"workflow_name": "x"},  # missing `payload`
+            {"workflow_name": "x"},
             ctx,
         )
         self.assertTrue(result.startswith("ERROR"))
 
-
-# ==================== gitignore + example file ====================
 
 class ConfigFilePresenceTests(unittest.TestCase):
     def test_example_template_is_committed(self):
@@ -302,7 +284,6 @@ class ConfigFilePresenceTests(unittest.TestCase):
         self.assertTrue(example_path.exists(), "n8n_workflows.yaml.example must be committed")
 
     def test_real_config_is_gitignored(self):
-        """git check-ignore exits 0 if the path is ignored."""
         repo_root = pathlib.Path(__file__).parent.parent.parent
         result = subprocess.run(
             ["git", "check-ignore", "ifa/config/n8n_workflows.yaml"],
@@ -310,7 +291,6 @@ class ConfigFilePresenceTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        # exit code 0 = ignored
         self.assertEqual(
             result.returncode, 0,
             f"ifa/config/n8n_workflows.yaml must be in .gitignore. Got: {result.stdout} {result.stderr}",

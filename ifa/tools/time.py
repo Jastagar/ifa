@@ -1,4 +1,3 @@
-"""`get_time` tool — adapter wrapping ifa.skills.system.TimeSkill."""
 from ifa.core.context import AgentContext
 from ifa.skills.system import TimeSkill
 from ifa.tools.registry import Tool, register
