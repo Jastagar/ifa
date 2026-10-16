@@ -34,6 +34,7 @@ import time
 from typing import Optional
 
 from ifa.services.tts_service import TTSService
+from ifa.utils import latency
 
 
 class _InputMode:
@@ -313,6 +314,14 @@ class VoiceInput(_InputMode):
                 audio = self._capture_utterance(
                     read_chunk=self._read_capture_chunk, **capture_kwargs
                 )
+                # The user stopped talking one VAD silence window ago.
+                silence_ms = int(os.environ.get("IFA_VAD_SILENCE_MS", "1500"))
+                timer = latency.begin(
+                    "voice",
+                    t0=time.perf_counter() - silence_ms / 1000,
+                    vad_wait_ms=silence_ms,
+                )
+                timer.mark("captured")
                 duration = len(audio) / 16_000
                 
                 if len(audio):
@@ -328,6 +337,7 @@ class VoiceInput(_InputMode):
                     print(f"[voice] captured {duration:.2f}s — transcribing...")
 
                 transcribedText = self._transcribe(audio)
+                timer.mark("stt_done")
                 if self._listener._api_context:
                     text = f"""
 Based on this mobile notification's data context:

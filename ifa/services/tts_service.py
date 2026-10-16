@@ -15,6 +15,8 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS
 from blingfire import text_to_sentences
 from rich.console import Console
 
+from ifa.utils import latency
+
 _console = Console()
 
 class TTSService:
@@ -106,6 +108,7 @@ class TTSService:
                     if self._stop_event.is_set():
                         break
 
+                    synth_started = time.perf_counter()
                     with contextlib.redirect_stdout(io.StringIO()):
                         with contextlib.redirect_stderr(io.StringIO()):
                             wav = self.model.generate(
@@ -120,20 +123,25 @@ class TTSService:
                         .numpy()
                         .astype(np.float32)
                     )
+                    latency.current().record_tts(
+                        chars=len(sentence),
+                        synth_ms=round((time.perf_counter() - synth_started) * 1000),
+                        audio_ms=round(len(audio) / self.model.sr * 1000),
+                    )
 
-                    self._audio_queue.put((audio, None))
+                    self._audio_queue.put((audio, None, text))
 
             except Exception as exc:
                 _console.print(f"Producer error: {exc}")
 
             finally:
-                self._audio_queue.put((None, completed))
+                self._audio_queue.put((None, completed, text))
                 self._text_queue.task_done()
 
     def _play_audio(self) -> None:
         stream = None
         while True:
-            audio, completed = self._audio_queue.get()
+            audio, completed, source_text = self._audio_queue.get()
             try:
                 if audio is not None:
                     if stream is None:
@@ -144,14 +152,20 @@ class TTSService:
                             blocksize=2048,
                         )
                         stream.start()
+                    latency.current().audio_started(source_text)
                     stream.write(audio)
                 elif completed is not None:
                     with self._lock:
                         self._active_count -= 1
+                        all_done = self._active_count == 0
                         self._mute_until = max(
                             self._mute_until,
                             time.monotonic() + self._cooldown_sec,
                         )
+                    if all_done:
+                        # The ack can drain the queue before the answer arrives,
+                        # so keep the latest idle moment, not the first.
+                        latency.current().mark("audio_done", last=True)
                     completed.set()
             finally:
                 self._audio_queue.task_done()

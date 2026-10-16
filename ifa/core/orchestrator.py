@@ -34,6 +34,7 @@ from ifa.services.activation_server import start_activation_server
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import init_input
+from ifa.utils import latency
 from ifa.utils.speech_queue import SpeechQueue
 from concurrent.futures import ThreadPoolExecutor
 from ifa.skills.vibe.vibe import VibeManager
@@ -45,6 +46,14 @@ N8N_CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config" / "n8n_workflo
 CONTACTS = {
     "john":"+918876700414",
 }
+
+
+def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
+    """Print the turn's latency breakdown once all of its speech has played."""
+    speech_queue.wait_until_empty()
+    while tts.is_speaking:
+        time.sleep(0.05)
+    timer.report()
 
 
 def resume_reminders(tts: TTSService, db_path: str) -> None:
@@ -144,9 +153,11 @@ def run() -> None:
         if user_input.lower() in ["exit", "quit"]:
             break
 
+        timer = latency.claim_or_begin("text")
         first_sentence_spoken = threading.Event()
 
         def streaming_callback(sentence: str):
+            timer.mark("first_sentence")
             first_sentence_spoken.set()
             on_sentence(sentence)
 
@@ -165,12 +176,17 @@ def run() -> None:
         if not first_sentence_spoken.wait(timeout=0.2):
             try:
                 acknowledgement = ack_future.result()
+                timer.ack_text = acknowledgement
+                timer.mark("ack_queued")
                 on_sentence(acknowledgement)
 
             except Exception:
                 traceback.print_exc()
 
         agent_future.result()
+        threading.Thread(
+            target=_report_when_quiet, args=(timer, speech_queue, tts), daemon=True
+        ).start()
         # Arm the follow-up window: in voice mode, the next utterance
         # within ~5s skips the wake word; text mode is a no-op.
         input_mode.arm_followup()

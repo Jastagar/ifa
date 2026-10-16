@@ -14,6 +14,7 @@ from ifa.services.ollama_client import (
 from pathlib import Path
 from ifa.skills.vibe.vibe import VibeManager
 from ifa.tools import registry
+from ifa.utils import latency
 
 MEMORY_FILE = Path("./memory.md")
 def load_memories() -> str:
@@ -109,8 +110,16 @@ def _stream_assistant_message(
     speech_parts: list[str] = []
     tool_calls: list[dict] = []
     tools = registry.as_ollama_schema() if allow_tools else None
+    timer = latency.current()
+    started_ms = timer.now_ms()
+    first_chunk_ms = None
+    final_chunk: dict = {}
 
     for chunk in stream_chat(model=MODEL, messages=messages, tools=tools):
+        if first_chunk_ms is None:
+            first_chunk_ms = timer.now_ms()
+        if chunk.get("done"):
+            final_chunk = chunk  # carries Ollama's prefill/decode timing stats
         message = chunk.get("message") or {}
         tool_calls.extend(message.get("tool_calls") or [])
         content = message.get("content") or ""
@@ -131,6 +140,7 @@ def _stream_assistant_message(
     if sentence_buffer.strip():
         speech_parts.append(sentence_buffer.strip())
 
+    timer.record_llm("llm", started_ms, first_chunk_ms, final_chunk, len(tool_calls))
     return (
         {"role": "assistant", "content": full_text, "tool_calls": tool_calls},
         speech_parts,

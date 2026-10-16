@@ -67,6 +67,10 @@ class SpeechQueue:
 
         self._queue.put(None)
 
+    def wait_until_empty(self):
+        """Block until every enqueued item has been handed to the handler."""
+        self._queue.join()
+
     @property
     def size(self) -> int:
         return self._queue.qsize()
