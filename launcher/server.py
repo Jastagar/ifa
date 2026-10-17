@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ifa.services import custom_apps, prompts
+from ifa.services import custom_apps, memory_store, prompts
 from ifa.skills.enums import App
 from launcher import env_file
 from launcher.agent_process import AgentProcess, LogBuffer
@@ -31,6 +31,7 @@ class Launcher:
         self.env_path = repo_root / ".env"
         self.apps_path = repo_root / "apps.json"
         self.prompts_path = repo_root / "prompts.json"
+        self.db_path = str(repo_root / "ifa.db")
         self.log = agent.log if agent else LogBuffer()
         python = venv_python(repo_root) or Path(sys.executable)
         self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root), log=self.log)
@@ -135,6 +136,21 @@ class Launcher:
         prompts.save(values, self.prompts_path)
         return self.prompts()
 
+    def memories(self) -> dict:
+        rows = memory_store.all_memories(self.db_path)
+        return {"kinds": list(memory_store.KINDS), "memories": [
+            {"id": r["id"], "topic": r["topic"], "fact": r["fact"], "kind": r["kind"],
+             "updated": memory_store.ago(r["updated_at"])}
+            for r in rows
+        ]}
+
+    def save_memories(self, body: dict) -> dict:
+        items, errors = memory_store.validate(body.get("memories"))
+        if errors:
+            raise SettingsError({str(i): message for i, message in errors.items()})
+        memory_store.replace_all(self.db_path, items)
+        return self.memories()
+
     def save_apps(self, body: dict) -> dict:
         apps, errors = custom_apps.validate(body.get("apps"))
         if errors:
@@ -236,6 +252,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 self._json(HTTPStatus.OK, launcher.apps())
             elif url.path == "/api/prompts":
                 self._json(HTTPStatus.OK, launcher.prompts())
+            elif url.path == "/api/memory":
+                self._json(HTTPStatus.OK, launcher.memories())
             elif url.path == "/api/setup":
                 self._json(HTTPStatus.OK, launcher.setup_steps())
             elif url.path == "/api/logs":
@@ -262,6 +280,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                     self._json(HTTPStatus.OK, launcher.save_apps(body))
                 elif path == "/api/prompts":
                     self._json(HTTPStatus.OK, launcher.save_prompts(body))
+                elif path == "/api/memory":
+                    self._json(HTTPStatus.OK, launcher.save_memories(body))
                 elif path == "/api/setup/run":
                     self._json(HTTPStatus.OK, launcher.run_setup(body))
                 elif path == "/api/setup/stop":

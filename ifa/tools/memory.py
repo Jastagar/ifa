@@ -1,83 +1,87 @@
-from pathlib import Path
-from datetime import datetime
-
 from ifa.core.context import AgentContext
-from ifa.tools.registry import Tool, register
-
-MEMORY_FILE = Path("memory.md")
-MAX_MEMORY_CHARS = 1000
+from ifa.services import memory_store
+from ifa.tools.registry import Tool
 
 
-def _ensure_memory_file():
-    if not MEMORY_FILE.exists():
-        MEMORY_FILE.write_text("# Memory\n", encoding="utf-8")
+def _remember(args: dict, ctx: AgentContext) -> str:
+    try:
+        saved = memory_store.remember(ctx.db_path, args["topic"], args["fact"], args.get("kind", "fact"))
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+    fact = saved["fact"].rstrip(".")
+    if saved["previous"]:
+        return f"Updated {saved['topic']}: {fact} (before: {saved['previous'].rstrip('.')})."
+    return f"Saved {saved['topic']}: {fact}."
 
 
-def _handler(args: dict, ctx: AgentContext) -> str:
-    _ensure_memory_file()
+def _recall(args: dict, ctx: AgentContext) -> str:
+    rows = memory_store.recall(ctx.db_path, args["query"])
+    if not rows:
+        return f"Nothing saved about {args['query']}. Tell Sir you don't have that noted; don't guess."
+    lines = []
+    for row in rows:
+        line = f"- {row['topic']} ({row['kind']}, saved {memory_store.ago(row['updated_at'])}): {row['fact']}"
+        if row["previous"] and row["kind"] == "progress":
+            line += f" (before that: {row['previous']})"
+        lines.append(line)
+    return "Saved memories, best match first:\n" + "\n".join(lines)
 
-    memory = args["memory"].strip()
-    category = args.get("category", "General").strip()
 
-    if not memory:
-        return "I didn't catch what to remember."
-
-    if len(memory) > MAX_MEMORY_CHARS:
-        memory = memory[:MAX_MEMORY_CHARS]
-
-    content = MEMORY_FILE.read_text(encoding="utf-8")
-
-    if memory.lower() in content.lower():
-        return "I already know that."
-
-    section = f"## {category}"
-
-    if section not in content:
-        content += f"\n\n{section}\n"
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = f"\n- [{timestamp}] {memory}"
-
-    section_start = content.index(section) + len(section)
-    next_section = content.find("\n## ", section_start)
-
-    if next_section == -1:
-        content += entry
-    else:
-        content = (
-            content[:next_section]
-            + entry
-            + content[next_section:]
-        )
-
-    MEMORY_FILE.write_text(content, encoding="utf-8")
-
-    return "Got it, I'll remember that."
+def _forget(args: dict, ctx: AgentContext) -> str:
+    row = memory_store.forget(ctx.db_path, args["topic"])
+    if row is None:
+        return f"Nothing saved about {args['topic']}."
+    return f"Forgot {row['topic']}."
 
 
 TOOL = Tool(
     name="remember",
     description=(
-        "call this tool when ever user tells you to remember something, note something or check something from the memory."
+        "Save or update one thing Sir wants you to keep, one topic per call: where he got to in something "
+        "(kind progress, e.g. 'I stopped Sherlock at episode 8'), something he likes or dislikes (preference), "
+        "how he wants something done (instruction, e.g. 'when I say gaming time, open Steam'), or any other "
+        "fact (fact). Saving a topic again replaces the old value, so use the same short topic name. "
+        "Call it when he says remember, note, keep in mind, or tells you where he stopped or what he likes."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "memory": {
-                "type": "string",
-                "minLength": 1,
-                "description": "The information to remember as a standalone statement.",
-            },
-            "category": {
-                "type": "string",
-                "description": "Optional category such as Personal, Preferences, Projects, Work, Health, Goals.",
-                "default": "General",
-            },
+            "topic": {"type": "string", "minLength": 1,
+                      "description": "Short name of what it's about: 'Sherlock', 'coffee', 'gaming time', 'car service'."},
+            "fact": {"type": "string", "minLength": 1,
+                     "description": "What to remember, as a short sentence: 'Stopped at season 2, episode 8.'"},
+            "kind": {"type": "string", "enum": list(memory_store.KINDS)},
         },
-        "required": ["memory"],
+        "required": ["topic", "fact", "kind"],
         "additionalProperties": False,
     },
-    handler=_handler,
+    handler=_remember,
 )
 
-register(TOOL)
+RECALL_TOOL = Tool(
+    name="recall",
+    description=(
+        "Look up something Sir told you before. Call it whenever he asks about it ('where was I on Sherlock?', "
+        "'what do I like on my pizza?', 'when is my car service?'), then answer from the result in one sentence. "
+        "Never answer such questions from guesswork."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"query": {"type": "string", "minLength": 1, "description": "What he's asking about, e.g. 'Sherlock'."}},
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    handler=_recall,
+)
+
+FORGET_TOOL = Tool(
+    name="forget",
+    description="Delete a saved memory when Sir asks you to forget it or says it's no longer true.",
+    parameters={
+        "type": "object",
+        "properties": {"topic": {"type": "string", "minLength": 1}},
+        "required": ["topic"],
+        "additionalProperties": False,
+    },
+    handler=_forget,
+)

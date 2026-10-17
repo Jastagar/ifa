@@ -78,6 +78,12 @@ BENCH: list[BenchCase] = [
     BenchCase("remember that my cat is named Luna", ["remember"], "remember"),
     BenchCase("note down that I work remotely on Thursdays", ["remember"], "remember"),
     BenchCase("please remember I prefer tea over coffee", ["remember"], "remember"),
+    BenchCase("I stopped sherlock at episode 8", ["remember"], "remember",
+              check=lambda calls: any(c.name == "remember" and c.args.get("kind") == "progress"
+                                      and "sherlock" in str(c.args.get("topic", "")).lower() for c in calls)),
+    BenchCase("where was I on sherlock?", ["recall"], "recall"),
+    BenchCase("what do I like on my pizza?", ["recall"], "recall"),
+    BenchCase("forget what I told you about sherlock", ["forget"], "recall"),
     BenchCase("I'm tired today", [], "direct_response"),
     BenchCase("it's raining outside", [], "direct_response"),
 
@@ -140,6 +146,7 @@ THRESHOLDS = {
     "get_time": 1.00,
     "set_reminder": 0.75,
     "remember": 0.66,
+    "recall": 0.66,
     "call_n8n_workflow": 0.66,
     "open_app": 0.75,
     "open_website": 0.75,

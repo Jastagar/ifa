@@ -50,7 +50,7 @@ class AgentLoopTestCase(unittest.TestCase):
         self.ctx = AgentContext(tts=MagicMock(), db_path=":memory:", n8n_config={})
         for target, value in [
             ("ifa.core.agent_stream.VibeManager.get_system_based_on_vibe", ""),
-            ("ifa.core.agent_stream.load_memories", ""),
+            ("ifa.core.agent_stream.memory_store.prompt_context", ""),
         ]:
             patcher = patch(target, return_value=value)
             patcher.start()

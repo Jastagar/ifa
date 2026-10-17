@@ -9,5 +9,7 @@ def register_all() -> None:
         tool = mod.build_tool() if hasattr(mod, "build_tool") else mod.TOOL
         if tool is not None:
             register(tool)
+    register(memory.RECALL_TOOL)
+    register(memory.FORGET_TOOL)
     register(session.END_TOOL)
     register(session.RESTART_TOOL)

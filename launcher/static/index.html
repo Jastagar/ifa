@@ -89,6 +89,11 @@ textarea.prompt { width: 100%; min-height: 14em; resize: vertical; font-family: 
 .prompt-block { padding: 10px 0; }
 .prompt-block h3 { font-size: 14px; margin: 0 0 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .prompt-block .err { color: var(--danger); font-size: 12px; }
+.memory-row { display: grid; grid-template-columns: minmax(0, 1fr) 130px auto; gap: 6px 8px; padding: 8px 0; align-items: center; border-bottom: 1px solid var(--line); }
+.memory-row .fact { grid-column: 1 / -1; grid-row: 2; }
+.memory-row .meta { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.memory-row .err { grid-column: 1 / -1; color: var(--danger); font-size: 12px; }
+#add-memory { margin-top: 10px; }
 nav.groups { display: flex; gap: 6px; flex-wrap: wrap; }
 nav.groups a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
 nav.groups a:hover { color: var(--text); }
@@ -145,6 +150,15 @@ nav.groups a:hover { color: var(--text); }
         </div>
       </div>
     </section>
+    <section class="card" id="memory-card">
+      <h2>Memory</h2>
+      <div class="body">
+        <p class="hint">What Ifa remembers for you. Tell her ("I stopped Sherlock at episode 8", "I like my coffee black")
+          or edit here. Preferences and instructions she always keeps in mind; progress and facts she looks up when you ask.</p>
+        <div id="memories"></div>
+        <button id="add-memory" class="small" type="button">Add a memory</button>
+      </div>
+    </section>
     <section class="card" id="prompts-card">
       <h2>Prompts</h2>
       <div class="body">
@@ -183,10 +197,11 @@ const TOKEN = "__LAUNCHER_TOKEN__";
 const $ = (id) => document.getElementById(id);
 const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null,
   setup: null, setupRunning: false, apps: [], appsDirty: false, appErrors: {},
-  prompts: [], promptsDirty: false, promptErrors: {} };
+  prompts: [], promptsDirty: false, promptErrors: {},
+  memories: [], memoryKinds: [], memoriesDirty: false, memoryErrors: {} };
 
 function dirtyCount() {
-  return Object.keys(state.edits).length + Object.keys(state.custom).length + (state.appsDirty ? 1 : 0) + (state.promptsDirty ? 1 : 0);
+  return Object.keys(state.edits).length + Object.keys(state.custom).length + (state.appsDirty ? 1 : 0) + (state.promptsDirty ? 1 : 0) + (state.memoriesDirty ? 1 : 0);
 }
 
 async function api(path, body) {
@@ -429,6 +444,29 @@ function renderPrompts() {
   }));
 }
 
+function renderMemories() {
+  const rows = state.memories.map((mem, i) => {
+    const topic = el("input", { type: "text", value: mem.topic, placeholder: "Topic, e.g. Sherlock", autocomplete: "off", "aria-label": "Topic" });
+    const kind = el("select", { "aria-label": "Kind" }, ...state.memoryKinds.map((k) => el("option", { value: k }, k)));
+    kind.value = mem.kind;
+    const fact = el("input", { type: "text", class: "fact", value: mem.fact, placeholder: "What to remember", autocomplete: "off", "aria-label": "What to remember" });
+    const changed = () => { mem.topic = topic.value; mem.kind = kind.value; mem.fact = fact.value; state.memoriesDirty = true; markDirty(); };
+    for (const input of [topic, kind, fact]) input.addEventListener("input", changed);
+    const remove = el("button", { class: "small danger", type: "button", onclick: () => {
+      state.memories.splice(i, 1); state.memoriesDirty = true; state.memoryErrors = {}; renderMemories(); markDirty(); } }, "Remove");
+    return el("div", { class: "memory-row", id: "memory-" + i }, topic, kind, fact, remove,
+      mem.updated ? el("div", { class: "meta" }, "saved " + mem.updated) : null,
+      state.memoryErrors[i] ? el("div", { class: "err" }, state.memoryErrors[i]) : null);
+  });
+  $("memories").replaceChildren(...(rows.length ? rows : [el("p", { class: "hint" }, "Nothing saved yet.")]));
+}
+
+async function loadMemories() {
+  const data = await api("/api/memory");
+  state.memories = data.memories; state.memoryKinds = data.kinds; state.memoriesDirty = false; state.memoryErrors = {};
+  renderMemories(); markDirty();
+}
+
 async function loadPrompts() {
   const data = await api("/api/prompts");
   state.prompts = data.prompts; state.promptsDirty = false; state.promptErrors = {};
@@ -472,6 +510,20 @@ async function save() {
       renderApps();
       banner(e.fields ? "Some apps are invalid. Fix the highlighted rows." : "Saving apps failed: " + e.message, "error");
       $("apps-card").scrollIntoView({ behavior: "smooth", block: "center" });
+      markDirty();
+      return false;
+    }
+  }
+  if (state.memoriesDirty) {
+    try {
+      const result = await api("/api/memory", { memories: state.memories });
+      state.memories = result.memories; state.memoriesDirty = false; state.memoryErrors = {};
+      renderMemories();
+    } catch (e) {
+      state.memoryErrors = e.fields || {};
+      renderMemories();
+      banner(e.fields ? "Some memories are invalid. Fix the highlighted rows." : "Saving memory failed: " + e.message, "error");
+      $("memory-card").scrollIntoView({ behavior: "smooth", block: "center" });
       markDirty();
       return false;
     }
@@ -563,6 +615,11 @@ $("add-custom").addEventListener("click", () => {
   state.custom[key] = value; $("new-key").value = ""; $("new-value").value = "";
   banner(""); renderSettings();
 });
+$("add-memory").addEventListener("click", () => {
+  state.memories.push({ topic: "", kind: "fact", fact: "" }); state.memoriesDirty = true;
+  renderMemories(); markDirty();
+  $("memory-" + (state.memories.length - 1))?.querySelector("input")?.focus();
+});
 $("add-app").addEventListener("click", () => {
   const name = $("new-app-name").value.trim(), command = $("new-app-command").value.trim();
   if (!name || !command) { banner("Give the app a name and a command.", "error"); return; }
@@ -581,7 +638,7 @@ window.addEventListener("beforeunload", (ev) => {
   if (dirtyCount()) { ev.preventDefault(); ev.returnValue = ""; }
 });
 
-loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps(), loadPrompts()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
+loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps(), loadPrompts(), loadMemories()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
 pollLogs();
 setInterval(pollLogs, 800);
 </script>

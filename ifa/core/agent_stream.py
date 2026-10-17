@@ -7,22 +7,15 @@ from ifa.config.settings import OLLAMA_MODEL
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory, tool_step
 from ifa.core.personality import tool_framing
-from ifa.services import prompts
+from ifa.services import memory_store, prompts
 from ifa.services.ollama_client import (
     build_tool_result_message,
     stream_chat,
 )
-from pathlib import Path
 from ifa.skills.vibe.vibe import VibeManager
 from ifa.tools import registry
 from ifa.utils import latency
 
-MEMORY_FILE = Path("./memory.md")
-def load_memories() -> str:
-    if not MEMORY_FILE.exists():
-        return ""
-
-    return MEMORY_FILE.read_text(encoding="utf-8").strip()
 MODEL = OLLAMA_MODEL
 
 MAX_TOOL_HOPS = 3
@@ -30,16 +23,11 @@ SPEECH_BATCH_SENTENCES = 1
 SPEECH_BATCH_CHARS = 220
 
 
-def _build_system_prompt(nonce: str) -> str:
+def _build_system_prompt(nonce: str, db_path: str | None = None) -> str:
     parts = [prompts.get("persona"), tool_framing(nonce), VibeManager.get_system_based_on_vibe()]
-    memory = load_memories()
+    memory = memory_store.prompt_context(db_path) if db_path else ""
     if memory:
-        parts.append(
-            "Long-term memory:\n"
-            "The following information has been intentionally remembered from previous conversations.\n"
-            "Treat it as persistent context.\n\n"
-            f"{memory}"
-        )
+        parts.append(memory)
     return "\n\n".join(parts)
 
 TOOL_RESULT_MARKER = "TOOL_RESULT_"
@@ -116,7 +104,7 @@ def _notification_hint(ctx: AgentContext) -> str:
 
 def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
-        {"role": "system", "content": _build_system_prompt(nonce)},
+        {"role": "system", "content": _build_system_prompt(nonce, ctx.db_path)},
         *memory.recent(),
         {"role": "user", "content": _notification_hint(ctx) + user_text},
     ]

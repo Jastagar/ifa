@@ -28,6 +28,15 @@ Adding a new setting means adding one `Setting(...)` line to `launcher/settings_
 
 The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launcher with any Python 3.10+ and press **Run missing steps**. The page only sends step names; the commands themselves are defined in `launcher/setup_steps.py`.
 
+## Memory
+
+Tell Ifa things to keep and ask about them later:
+
+- "I stopped Sherlock at episode 8" … days later … "where was I on Sherlock?" → "You left at episode 8, Sir."
+- "I like my coffee black", "when I say gaming time, open Steam and turn on the vibe"
+
+Memories are stored by topic in `ifa.db` (`ifa/services/memory_store.py`): saving a topic again replaces it, so the latest episode wins. There are four kinds: progress, preference, instruction and fact. Preferences and instructions go into every prompt so Ifa always follows them; for progress and facts only the topic names do, and Ifa looks them up with the `recall` tool when you ask. `forget` deletes one. You can view, edit, add and remove memories in the launcher's Memory card. An old `memory.md` is imported on first start and renamed to `memory.md.imported`.
+
 ## Ending a conversation and restarting
 
 Say "that's all, thanks" (or "thanks", "never mind", "bye", "bas", "ho gaya" …) and Ifa ends the turn at once: no reply and no follow-up listening. A message that is only a goodbye skips the model entirely (`ifa/core/dismiss.py`); a wordier goodbye goes through the `end_conversation` tool. A bare "no" or "stop" doesn't count, since those usually answer a question or mean "stop the music".

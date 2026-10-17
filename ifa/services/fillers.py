@@ -17,6 +17,8 @@ BY_TOOL = {
     "get_time": "Checking the time.",
     "set_reminder": "Setting that up.",
     "remember": "Noting that down.",
+    "recall": "Let me check.",
+    "forget": "Okay.",
     "analyze_screen": "Let me take a look.",
     "spotify_control": "On it.",
     "open_app": "Opening that.",
