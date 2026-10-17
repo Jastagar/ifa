@@ -249,6 +249,36 @@ class PhoneServerEndToEndTests(unittest.TestCase):
         self.assertEqual(self._run(go()), ["listening", "end_of_speech", "no_speech", "turn_end"])
         self.assertEqual(self.submitted, [])
 
+    def test_phone_stop_ends_capture_with_the_audio_so_far(self):
+        import aiohttp
+
+        def capture(read_chunk, start_timeout_ms=None):
+            while True:
+                read_chunk()
+
+        self.server._capture = capture
+
+        async def go():
+            events = []
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(
+                    f"http://127.0.0.1:{self.port}/phone", headers={"X-IFA-Token": "424242"}
+                )
+                await ws.receive()
+                await ws.send_str(json.dumps({"type": "start"}))
+                await ws.send_bytes(to_pcm16(_speech(1.0)))
+                await ws.send_str(json.dumps({"type": "stop", "reason": "silence"}))
+                while "turn_end" not in [e["type"] for e in events]:
+                    msg = await ws.receive()
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        events.append(json.loads(msg.data))
+                await ws.close()
+            return [e["type"] for e in events]
+
+        kinds = self._run(go())
+        self.assertEqual(kinds[:3], ["listening", "end_of_speech", "transcript"])
+        self.assertEqual(self.submitted, ["turn on the lights"])
+
     def test_discovery_answers_the_probe(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(2)

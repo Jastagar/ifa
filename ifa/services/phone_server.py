@@ -38,6 +38,7 @@ class PcmBuffer:
         self._cond = threading.Condition()
         self._samples = np.zeros(0, dtype=np.float32)
         self._closed = False
+        self._close_reason = "phone stopped streaming"
         self._stall_sec = stall_sec
 
     def reset(self) -> None:
@@ -52,9 +53,10 @@ class PcmBuffer:
             self._samples = np.concatenate((self._samples, samples))
             self._cond.notify_all()
 
-    def close(self) -> None:
+    def close(self, reason: str = "phone stopped streaming") -> None:
         with self._cond:
             self._closed = True
+            self._close_reason = reason
             self._cond.notify_all()
 
     def read(self, n: int) -> np.ndarray:
@@ -62,7 +64,7 @@ class PcmBuffer:
         with self._cond:
             while len(self._samples) < n:
                 if self._closed:
-                    raise StreamClosed("phone stopped streaming")
+                    raise StreamClosed(self._close_reason)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise StreamClosed("phone audio stalled")
@@ -147,10 +149,10 @@ class PhoneSession:
             timeout = message.get("startTimeoutMs")
             self._start_listening(int(timeout) if timeout else None)
         elif kind == "stop":
-            self.audio.close()
+            self.audio.close(f"the phone ({message.get('reason') or 'stop'})")
         elif kind == "cancel":
             self._cancelled = True
-            self.audio.close()
+            self.audio.close("cancel")
         elif kind == "text":
             self._start_text(str(message.get("text") or "").strip())
         elif kind == "notification":
@@ -197,20 +199,25 @@ class PhoneSession:
 
         try:
             audio = self.server.capture(read_chunk, start_timeout_ms=start_timeout_ms)
-        except StreamClosed:
+            ended_by = "Ifa's VAD"
+        except StreamClosed as exc:
             audio = np.concatenate(collected) if collected else np.zeros(0, dtype=np.float32)
+            ended_by = str(exc)
         except Exception as exc:
             print(f"[phone] capture failed: {exc}")
             audio = np.zeros(0, dtype=np.float32)
+            ended_by = "error"
         finally:
             self._capturing = False
 
         self.send_json({"type": "end_of_speech"})
+        print(f"[phone] captured {len(audio) / SAMPLE_RATE:.2f}s, ended by {ended_by}")
+        self.server.dump_wav(audio)
         if self._cancelled or self.closed or not has_voice(audio):
             self._no_speech()
             return
 
-        print(f"[phone] captured {len(audio) / SAMPLE_RATE:.2f}s — transcribing...")
+        print("[phone] transcribing...")
         text = (self.server.transcribe(audio) or "").strip()
         if not text or self._cancelled or self.closed:
             self._no_speech()
@@ -343,7 +350,25 @@ class PhoneServer:
             "wakeThreshold": float(os.environ.get("IFA_WAKE_THRESHOLD", "0.7")),
             "wakeConsecutive": int(os.environ.get("IFA_WAKE_CONSECUTIVE", "2")),
             "followupSec": self.followup_sec,
+            "vadSilenceMs": int(os.environ.get("IFA_VAD_SILENCE_MS", "1500")),
         }
+
+    def dump_wav(self, audio: np.ndarray) -> None:
+        out_dir = os.environ.get("IFA_VOICE_DEBUG_WAV")
+        if not out_dir or not len(audio):
+            return
+        try:
+            import wave
+            os.makedirs(out_dir, exist_ok=True)
+            path = os.path.join(out_dir, f"ifa_phone_{int(time.time() * 1000)}.wav")
+            with wave.open(path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(SAMPLE_RATE)
+                wf.writeframes(to_pcm16(audio))
+            print(f"[phone] dumped WAV: {path}")
+        except Exception as exc:
+            print(f"[phone] WAV dump failed: {exc}")
 
     def discovery_reply(self) -> bytes:
         return json.dumps({
