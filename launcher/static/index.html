@@ -300,6 +300,13 @@ function fieldValue(key) {
   return "";
 }
 
+function phoneFact(p) {
+  if (!p || !p.enabled) return el("span", { class: "warn" }, "off (IFA_PHONE_ENABLED=0)");
+  if (p.error) return el("span", { class: "bad" }, p.error);
+  return el("span", {}, "pairing code ", el("strong", {}, p.pairing_code),
+    p.address ? ` · PC address ${p.address}:${p.port}` : "");
+}
+
 function renderFacts() {
   const c = state.checks;
   if (!c) return;
@@ -323,7 +330,8 @@ function renderFacts() {
     ...row("Ollama", ol.ok ? el("span", { class: "ok" }, `reachable at ${ol.url} · ${ol.models.length} model(s)`)
       : el("span", { class: "bad" }, `not reachable at ${ol.url} (${ol.error})`)),
     ...row("Model", modelState),
-    ...row(".env", c.env_file ? "found" : el("span", { class: "warn" }, "will be created on save")));
+    ...row(".env", c.env_file ? "found" : el("span", { class: "warn" }, "will be created on save")),
+    ...row("Phone app", phoneFact(c.phone)));
   let list = $("ollama-models");
   if (!list) { list = el("datalist", { id: "ollama-models" }); document.body.append(list); }
   list.replaceChildren(...ol.models.map((m) => el("option", { value: m })));

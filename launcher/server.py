@@ -18,6 +18,7 @@ from launcher.agent_process import AgentProcess, LogBuffer
 from launcher.setup_steps import SetupRunner, display, plan
 from launcher.settings_schema import BY_KEY, GROUPS, SETTINGS, normalize
 from launcher.system_info import check_ollama, detect_system, venv_python
+from ifa.services.pairing import lan_address, load_pairing_code
 
 STATIC = Path(__file__).parent / "static"
 CUSTOM_KEY = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
@@ -133,7 +134,19 @@ class Launcher:
             "system": detect_system(self.repo_root),
             "ollama": check_ollama(model_url, values.get("IFA_OLLAMA_MODEL", "")),
             "env_file": self.env_path.exists(),
+            "phone": self.phone_info(values),
         }
+
+    def phone_info(self, values: dict) -> dict:
+        enabled = (values.get("IFA_PHONE_ENABLED") or "1").lower() not in {"0", "false", "no", "off"}
+        if not enabled:
+            return {"enabled": False}
+        try:
+            code = load_pairing_code(self.repo_root / ".phone_token", values.get("IFA_PHONE_TOKEN", ""))
+        except OSError as exc:
+            return {"enabled": True, "error": str(exc)}
+        port = values.get("IFA_PHONE_PORT") or BY_KEY["IFA_PHONE_PORT"].default
+        return {"enabled": True, "pairing_code": code, "address": lan_address(), "port": port}
 
     def start_agent(self) -> dict:
         if self.setup.status()["running"]:

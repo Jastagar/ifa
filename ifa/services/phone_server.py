@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import pathlib
 import secrets
 import socket
 import threading
@@ -11,6 +10,8 @@ import time
 from typing import Callable
 
 import numpy as np
+
+from ifa.services.pairing import lan_address, load_pairing_code
 
 PROTOCOL_VERSION = 1
 DISCOVERY_PROBE = b"IFA_DISCOVER_V1"
@@ -22,24 +23,10 @@ MIN_VOICE_SAMPLES = SAMPLE_RATE * 3 // 10
 MIN_VOICE_PEAK = 0.01
 MAX_FAILED_PAIRINGS = 5
 PAIRING_LOCKOUT_SEC = 60
-TOKEN_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / ".phone_token"
 
 
 def phone_enabled() -> bool:
     return os.environ.get("IFA_PHONE_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
-
-
-def load_pairing_code(path: pathlib.Path = TOKEN_PATH) -> str:
-    code = os.environ.get("IFA_PHONE_TOKEN", "").strip()
-    if code:
-        return code
-    if path.exists():
-        code = path.read_text(encoding="utf-8").strip()
-        if code:
-            return code
-    code = f"{secrets.randbelow(10 ** 6):06d}"
-    path.write_text(code, encoding="utf-8")
-    return code
 
 
 class StreamClosed(Exception):
@@ -370,6 +357,7 @@ class PhoneServer:
         count, until = self._failures.get(peer, (0, 0.0))
         if until > time.monotonic():
             return 429
+        offered = "".join(offered.split())
         if secrets.compare_digest(offered.encode("utf-8"), self.pairing_code.encode("utf-8")):
             self._failures.pop(peer, None)
             return 200
@@ -380,12 +368,16 @@ class PhoneServer:
 
     def start(self) -> "PhoneServer":
         threading.Thread(target=self._serve_http, name="ifa-phone", daemon=True).start()
-        threading.Thread(target=self._serve_discovery, name="ifa-phone-discovery", daemon=True).start()
         self._ready.wait(timeout=10)
         if self._start_error is not None:
             raise self._start_error
+        discovery = self._bind_discovery()
+        if discovery is not None:
+            threading.Thread(
+                target=self._serve_discovery, args=(discovery,), name="ifa-phone-discovery", daemon=True
+            ).start()
         print(
-            f"[phone] listening on ws://{self.host}:{self.port}/phone "
+            f"[phone] listening on ws://{lan_address() or self.host}:{self.port}/phone "
             f"(discovery udp/{self.discovery_port}). Pairing code: {self.pairing_code}"
         )
         return self
@@ -421,7 +413,12 @@ class PhoneServer:
         if status == 429:
             return web.json_response({"error": "too many wrong pairing codes, wait a minute"}, status=429)
         if status == 401:
-            print(f"[phone] {peer} sent a wrong pairing code")
+            offered = request.headers.get("X-IFA-Token", "")
+            print(
+                f"[phone] {peer} sent a wrong pairing code "
+                f"({len(offered.strip())} characters{', empty' if not offered.strip() else ''}). "
+                f"The code is {self.pairing_code}"
+            )
             return web.json_response({"error": "wrong pairing code"}, status=401)
 
         ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
@@ -452,14 +449,17 @@ class PhoneServer:
             print(f"[phone] disconnected: {peer}")
         return ws
 
-    def _serve_discovery(self) -> None:
+    def _bind_discovery(self) -> socket.socket | None:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("", self.discovery_port))
+            return sock
         except OSError as exc:
             print(f"[phone] discovery unavailable ({exc}); set the PC address in the app instead")
-            return
+            return None
+
+    def _serve_discovery(self, sock: socket.socket) -> None:
         reply = self.discovery_reply()
         while True:
             try:

@@ -117,6 +117,10 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(server.check_pairing("10.0.0.2", "123456"), 429)
         self.assertEqual(server.check_pairing("10.0.0.3", "123456"), 200)
 
+    def test_spaces_in_the_offered_code_are_ignored(self):
+        server = PhoneServer(lambda *_: None, FakeTTS(), pairing_code="123456")
+        self.assertEqual(server.check_pairing("10.0.0.2", " 123 456 "), 200)
+
 
 class PhoneTTSTests(unittest.TestCase):
     def test_routes_speech_and_clips_to_the_phone_until_done(self):
