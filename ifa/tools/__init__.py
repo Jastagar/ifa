@@ -1,7 +1,7 @@
 def register_all() -> None:
     from ifa.tools import (
-        browser, commands, gamelauncher, memory, n8n, notifications, reminder, spotify, system, time, vibe, vision,
-        whatsApp,
+        browser, commands, gamelauncher, memory, n8n, notifications, reminder, session, spotify, system, time, vibe,
+        vision, whatsApp,
     )
     from ifa.tools.registry import register
 
@@ -9,3 +9,5 @@ def register_all() -> None:
         tool = mod.build_tool() if hasattr(mod, "build_tool") else mod.TOOL
         if tool is not None:
             register(tool)
+    register(session.END_TOOL)
+    register(session.RESTART_TOOL)

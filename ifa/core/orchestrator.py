@@ -10,6 +10,7 @@ from ifa.core.agent_stream import (
     agent_turn_stream,
 )
 from ifa.core.context import AgentContext
+from ifa.core.dismiss import is_dismissal
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
 from ifa.services.fillers import Fillers, generic_phrases
@@ -30,6 +31,7 @@ from ifa.voice.input import VoiceInput, init_input
 from ifa.utils import latency
 from ifa.utils.speech_queue import SpeechQueue
 from concurrent.futures import ThreadPoolExecutor
+from ifa.supervisor import RESTART_EXIT_CODE
 from ifa.skills.vibe.vibe import VibeManager
 
 
@@ -94,10 +96,12 @@ def run_phone_turn(
     memory: Memory,
     fillers: Fillers,
     executor: ThreadPoolExecutor,
-) -> None:
+) -> threading.Thread | None:
     phone_tts = PhoneTTS(ctx.tts, phone)
 
     def on_sentence(sentence: str) -> None:
+        if not sentence.strip():
+            return
         print(f"Ifa (phone): {sentence}")
         phone.send_reply(sentence)
         phone_tts.enqueue(sentence)
@@ -110,23 +114,41 @@ def run_phone_turn(
         print(f"[phone] turn failed: {exc}")
         phone.send_json({"type": "error", "message": "Ifa hit an error on that one."})
         phone.finish_turn(followup=False)
-        return
+        return None
     finally:
         ctx.tts = pc_tts
+    followup = not ctx.end_conversation
 
     def finish() -> None:
         phone_tts.wait_until_done()
-        phone.finish_turn()
+        phone.finish_turn(followup=followup)
         timer.report()
 
-    threading.Thread(target=finish, name="ifa-phone-turn", daemon=True).start()
+    thread = threading.Thread(target=finish, name="ifa-phone-turn", daemon=True)
+    thread.start()
+    return thread
 
 
-def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
+def _wait_until_quiet(speech_queue: SpeechQueue, tts: TTSService) -> None:
     speech_queue.wait_until_empty()
     while tts.is_speaking:
         time.sleep(0.05)
+
+
+def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
+    _wait_until_quiet(speech_queue, tts)
     timer.report()
+
+
+def _dismiss(ctx: AgentContext) -> None:
+    ctx.turn += 1
+    print("[ifa] conversation over (dismissed)")
+
+
+def _restart() -> None:
+    print("[ifa] restarting on request...", flush=True)
+    sys.stdout.flush()
+    os._exit(RESTART_EXIT_CODE)
 
 
 def resume_reminders(tts: TTSService, db_path: str) -> None:
@@ -236,6 +258,8 @@ def run() -> None:
     memory = Memory()
 
     def on_sentence(sentence: str):
+        if not sentence.strip():
+            return
         print(f"Ifa: {sentence}")
         speech_queue.enqueue(sentence)
 
@@ -259,18 +283,38 @@ def run() -> None:
     while True:
         raw_input, phone = turns.get()
         user_input = raw_input.strip()
+        ctx.end_conversation = False
+        ctx.restart_requested = False
         if phone is not None:
             print(f"Phone: {user_input}")
-            run_phone_turn(user_input, phone, ctx, memory, fillers, executor)
+            if is_dismissal(user_input):
+                _dismiss(ctx)
+                phone.finish_turn(followup=False)
+                continue
+            finished = run_phone_turn(user_input, phone, ctx, memory, fillers, executor)
+            if ctx.restart_requested:
+                if finished is not None:
+                    finished.join(timeout=30)
+                _restart()
             continue
         if not user_input:
             continue
         print(f"You: {user_input}")
         if user_input.lower() in ["exit", "quit"]:
             break
+        if is_dismissal(user_input):
+            _dismiss(ctx)
+            input_mode.end_turn()
+            continue
 
         timer = run_turn(user_input, ctx, memory, on_sentence, fillers, executor)
+        if ctx.restart_requested:
+            _wait_until_quiet(speech_queue, tts)
+            _restart()
         threading.Thread(
             target=_report_when_quiet, args=(timer, speech_queue, tts), daemon=True
         ).start()
-        input_mode.arm_followup()
+        if ctx.end_conversation:
+            input_mode.end_turn()
+        else:
+            input_mode.arm_followup()

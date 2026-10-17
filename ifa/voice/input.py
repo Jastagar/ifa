@@ -20,6 +20,9 @@ class _InputMode:
     def pause_while(self, check: Callable[[], bool]) -> None:
         pass
 
+    def end_turn(self) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
@@ -97,6 +100,10 @@ class VoiceInput(_InputMode):
 
     def pause_while(self, check: Callable[[], bool]) -> None:
         self._paused = check
+
+    def end_turn(self) -> None:
+        self._followup_until = 0.0
+        self._turn_complete.set()
 
     def arm_followup(self) -> None:
         if self._followup_window_sec > 0:

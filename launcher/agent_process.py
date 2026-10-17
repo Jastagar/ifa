@@ -127,7 +127,12 @@ class AgentProcess:
     def _signal(proc: subprocess.Popen, kill: bool) -> None:
         try:
             if sys.platform == "win32":
-                proc.kill() if kill else proc.send_signal(signal.CTRL_BREAK_EVENT)
+                if kill:
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    proc.kill()
+                else:
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(proc.pid, signal.SIGKILL if kill else signal.SIGTERM)
         except (ProcessLookupError, OSError):

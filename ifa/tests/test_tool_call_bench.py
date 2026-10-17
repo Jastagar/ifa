@@ -107,6 +107,11 @@ BENCH: list[BenchCase] = [
 
     BenchCase("send john a whatsapp saying I'll be late", ["whats_app"], "whats_app"),
 
+    BenchCase("alright that's everything I needed, talk to you later", ["end_conversation"], "end_conversation"),
+    BenchCase("you can stop listening now, I'm done", ["end_conversation"], "end_conversation"),
+    BenchCase("restart yourself", ["restart_ifa"], "restart_ifa"),
+    BenchCase("ifa please reboot, I changed your settings", ["restart_ifa"], "restart_ifa"),
+
     BenchCase("how are you today?", [], "direct_response"),
     BenchCase("thanks!", [], "direct_response"),
     BenchCase("ok got it", [], "direct_response"),
@@ -138,6 +143,8 @@ THRESHOLDS = {
     "call_n8n_workflow": 0.66,
     "open_app": 0.75,
     "open_website": 0.75,
+    "end_conversation": 0.75,
+    "restart_ifa": 0.66,
     "spotify_control": 0.75,
     "switch_mode": 0.75,
     "analyze_screen": 0.75,

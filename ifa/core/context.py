@@ -17,3 +17,5 @@ class AgentContext:
     notifications: "NotificationCenter | None" = None
     turn: int = 0
     user_text: str = ""
+    end_conversation: bool = False
+    restart_requested: bool = False

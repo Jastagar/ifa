@@ -1,5 +1,12 @@
 import os
 import pathlib
+import sys
+
+from ifa.supervisor import is_supervised, supervise
+
+if __name__ == "__main__" and not is_supervised():
+    sys.exit(supervise())
+
 
 from dotenv import load_dotenv
 

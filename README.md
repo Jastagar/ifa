@@ -28,6 +28,12 @@ Adding a new setting means adding one `Setting(...)` line to `launcher/settings_
 
 The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launcher with any Python 3.10+ and press **Run missing steps**. The page only sends step names; the commands themselves are defined in `launcher/setup_steps.py`.
 
+## Ending a conversation and restarting
+
+Say "that's all, thanks" (or "thanks", "never mind", "bye", "bas", "ho gaya" …) and Ifa ends the turn at once: no reply and no follow-up listening. A message that is only a goodbye skips the model entirely (`ifa/core/dismiss.py`); a wordier goodbye goes through the `end_conversation` tool. A bare "no" or "stop" doesn't count, since those usually answer a question or mean "stop the music".
+
+Say "restart yourself" and Ifa says so, then restarts. `python -m ifa.main` runs a small supervisor (`ifa/supervisor.py`) that starts Ifa again when she exits with code 75, so it works the same from the launcher, the run scripts or a terminal, and picks up code and `.env` changes. The phone reconnects by itself.
+
 ## Running commands
 
 Ifa can run terminal commands (`cmd.exe` on Windows) with the `run_command` tool, for things like "what's my IP" or "how much disk space is left". It never runs one on its own: the first call only proposes the command, Ifa asks, and it runs only if your **very next** message is a yes (yes / okay / go ahead / haan …) within two minutes. That check is in code (`ifa/skills/commands.py`), not just the prompt. Commands that delete recursively, format disks, shut down, change accounts or permissions, or pipe downloaded code into a shell are refused outright. Turn the tool off with `IFA_COMMANDS_ENABLED=0` (launcher: Tools).
