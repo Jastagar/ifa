@@ -208,7 +208,7 @@ class PhoneSession:
 
         try:
             audio = self.server.capture(read_chunk, start_timeout_ms=start_timeout_ms)
-            ended_by = "Ifa's VAD"
+            ended_by = "Ifa's VAD" if len(audio) else "the start timeout (Ifa's VAD never heard speech)"
         except StreamClosed as exc:
             audio = np.concatenate(collected) if collected else np.zeros(0, dtype=np.float32)
             ended_by = str(exc)
