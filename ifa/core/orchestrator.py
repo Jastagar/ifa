@@ -1,5 +1,6 @@
 import pathlib
 import os
+import queue
 import sqlite3
 import sys
 import threading
@@ -22,6 +23,7 @@ from ifa.services.notifications import (
 from ifa.services.ollama_client import chat, check_health
 from ifa.services.tts_service import TTSService
 from ifa.services.activation_server import start_activation_server
+from ifa.services.phone_server import PhoneTTS, start_phone_server
 from ifa.tools import register_all
 from ifa.tools.n8n import N8nConfigError, load_n8n_config
 from ifa.voice.input import VoiceInput, init_input
@@ -83,6 +85,41 @@ def run_turn(
         play_filler()
     agent_future.result()
     return timer
+
+
+def run_phone_turn(
+    user_input: str,
+    phone,
+    ctx: AgentContext,
+    memory: Memory,
+    fillers: Fillers,
+    executor: ThreadPoolExecutor,
+) -> None:
+    phone_tts = PhoneTTS(ctx.tts, phone)
+
+    def on_sentence(sentence: str) -> None:
+        print(f"Ifa (phone): {sentence}")
+        phone.send_reply(sentence)
+        phone_tts.enqueue(sentence)
+
+    pc_tts = ctx.tts
+    ctx.tts = phone_tts
+    try:
+        timer = run_turn(user_input, ctx, memory, on_sentence, fillers, executor)
+    except Exception as exc:
+        print(f"[phone] turn failed: {exc}")
+        phone.send_json({"type": "error", "message": "Ifa hit an error on that one."})
+        phone.finish_turn(followup=False)
+        return
+    finally:
+        ctx.tts = pc_tts
+
+    def finish() -> None:
+        phone_tts.wait_until_done()
+        phone.finish_turn()
+        timer.report()
+
+    threading.Thread(target=finish, name="ifa-phone-turn", daemon=True).start()
 
 
 def _report_when_quiet(timer, speech_queue: SpeechQueue, tts: TTSService) -> None:
@@ -196,8 +233,22 @@ def run() -> None:
     if os.environ.get("IFA_API_ENABLED", "1").lower() not in {"0", "false", "no", "off"}:
         start_activation_server(notifications)
 
+    turns: queue.Queue = queue.Queue()
+
+    def pump_local_input() -> None:
+        while True:
+            turns.put((input_mode.get(), None))
+
+    threading.Thread(target=pump_local_input, name="ifa-local-input", daemon=True).start()
+    start_phone_server(lambda text, phone: turns.put((text, phone)), tts, notifications)
+
     while True:
-        user_input = input_mode.get().strip()
+        raw_input, phone = turns.get()
+        user_input = raw_input.strip()
+        if phone is not None:
+            print(f"Phone: {user_input}")
+            run_phone_turn(user_input, phone, ctx, memory, fillers, executor)
+            continue
         if not user_input:
             continue
         print(f"You: {user_input}")

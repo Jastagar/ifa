@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Optional
 
 import numpy as np
@@ -10,9 +11,15 @@ from ifa.utils.devices import resolve_device
 
 _model: Optional[object] = None
 _processor: Optional[object] = None
+_lock = threading.RLock()
 
 
 def _get_model():
+    with _lock:
+        return _load_model()
+
+
+def _load_model():
     global _model, _processor
 
     if _model is None:
@@ -94,7 +101,7 @@ def transcribe_array(
             for k, v in inputs.items()
         }
 
-        with torch.no_grad():
+        with _lock, torch.no_grad():
             output_ids = model.generate(
                 **inputs,
                 max_new_tokens=128,

@@ -67,16 +67,17 @@ class TTSService:
     def stop(self):
         self._stop_event.set()
 
-    def enqueue(self, text: str) -> threading.Event | None:
+    def enqueue(self, text: str, sink=None) -> threading.Event | None:
         if not text:
             return None
 
-        with self._lock:
-            self._active_count += 1
+        if sink is None:
+            with self._lock:
+                self._active_count += 1
 
         self._stop_event.clear()
         completed = threading.Event()
-        self._text_queue.put((text.strip(), completed))
+        self._text_queue.put((text.strip(), completed, sink))
         return completed
 
     def speak(self, text: str):
@@ -87,13 +88,18 @@ class TTSService:
     def synthesize(self, text: str) -> np.ndarray:
         return self._generate(text.strip())
 
-    def play_clip(self, audio: np.ndarray, label: str) -> threading.Event:
-        with self._lock:
-            self._active_count += 1
+    def play_clip(self, audio: np.ndarray, label: str, sink=None) -> threading.Event:
+        if sink is None:
+            with self._lock:
+                self._active_count += 1
         completed = threading.Event()
-        self._audio_queue.put((audio, None, label))
-        self._audio_queue.put((None, completed, label))
+        self._audio_queue.put((audio, None, label, sink))
+        self._audio_queue.put((None, completed, label, sink))
         return completed
+
+    @property
+    def sample_rate(self) -> int:
+        return int(self.model.sr)
 
     def _generate(self, sentence: str) -> np.ndarray:
         with self._model_lock:
@@ -113,7 +119,7 @@ class TTSService:
 
     def _produce_audio(self) -> None:
         while True:
-            text, completed = self._text_queue.get()
+            text, completed, sink = self._text_queue.get()
             try:
                 for sentence in self._split_sentences(text):
                     if self._stop_event.is_set():
@@ -127,21 +133,30 @@ class TTSService:
                         audio_ms=round(len(audio) / self.model.sr * 1000),
                     )
 
-                    self._audio_queue.put((audio, None, text))
+                    self._audio_queue.put((audio, None, text, sink))
 
             except Exception as exc:
                 _console.print(f"Producer error: {exc}")
 
             finally:
-                self._audio_queue.put((None, completed, text))
+                self._audio_queue.put((None, completed, text, sink))
                 self._text_queue.task_done()
 
     def _play_audio(self) -> None:
         stream = None
         while True:
-            audio, completed, source_text = self._audio_queue.get()
+            audio, completed, source_text, sink = self._audio_queue.get()
             try:
-                if audio is not None:
+                if sink is not None:
+                    if audio is not None:
+                        latency.current().audio_started(source_text)
+                        try:
+                            sink(audio, self.model.sr)
+                        except Exception as exc:
+                            _console.print(f"Audio sink error: {exc}")
+                    elif completed is not None:
+                        completed.set()
+                elif audio is not None:
                     if stream is None:
                         stream = sd.OutputStream(
                             samplerate=self.model.sr,

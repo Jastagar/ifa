@@ -31,6 +31,18 @@ The launcher starts Ifa with `venv`'s Python. On a fresh machine, open the launc
 
 Ifa can run terminal commands (`cmd.exe` on Windows) with the `run_command` tool, for things like "what's my IP" or "how much disk space is left". It never runs one on its own: the first call only proposes the command, Ifa asks, and it runs only if your **very next** message is a yes (yes / okay / go ahead / haan …) within two minutes. That check is in code (`ifa/skills/commands.py`), not just the prompt. Commands that delete recursively, format disks, shut down, change accounts or permissions, or pipe downloaded code into a shell are refused outright. Turn the tool off with `IFA_COMMANDS_ENABLED=0` (launcher: Tools).
 
+## Phone app
+
+The Android app ([ifa.app](https://github.com/jastagar/ifa.app)) connects to Ifa whenever this PC is running Ifa on the same Wi-Fi. It handles the wake word on the phone, a mic button, voice both ways and notifications. On startup Ifa prints:
+
+```
+[phone] listening on ws://0.0.0.0:8789/phone (discovery udp/8788). Pairing code: 123456
+```
+
+Type that code into the app once. The app finds the PC by broadcasting on UDP 8788 (or you can type the PC's IP). On Windows, allow Python through the firewall on private networks. Phone turns share Ifa's memory with the PC and run one at a time with it. Speech-to-text, the agent and the voice run on the PC, and the reply audio streams back to the phone instead of playing on the PC speakers.
+
+Settings (launcher: Notifications): `IFA_PHONE_ENABLED` (default `1`), `IFA_PHONE_PORT` (`8789`), `IFA_PHONE_DISCOVERY_PORT` (`8788`), `IFA_PHONE_TOKEN` (the pairing code; empty means Ifa generates a 6-digit code and saves it in `.phone_token`). Five wrong codes from one address lock it out for a minute. Code: `ifa/services/phone_server.py`.
+
 ## Testing phone notifications
 
 With Ifa running, send fake notifications to its local API (`POST /activate` on port 8787):

@@ -19,4 +19,5 @@ ifa/config/n8n_workflows.yaml
 .cache
 .spotify_token
 apps.json
+.phone_token
 PyWhatKit_DB.txt
