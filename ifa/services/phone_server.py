@@ -21,6 +21,8 @@ AUDIO_FRAME_SAMPLES = 4800
 AUDIO_STALL_SEC = 5.0
 MIN_VOICE_SAMPLES = SAMPLE_RATE * 3 // 10
 MIN_VOICE_PEAK = 0.01
+TARGET_PEAK = 0.5
+MAX_GAIN = 20.0
 MAX_FAILED_PAIRINGS = 5
 PAIRING_LOCKOUT_SEC = 60
 
@@ -75,6 +77,13 @@ class PcmBuffer:
 
 def has_voice(audio: np.ndarray) -> bool:
     return len(audio) >= MIN_VOICE_SAMPLES and float(np.abs(audio).max()) >= MIN_VOICE_PEAK
+
+
+def normalize(audio: np.ndarray, target_peak: float = TARGET_PEAK, max_gain: float = MAX_GAIN) -> np.ndarray:
+    peak = float(np.abs(audio).max()) if len(audio) else 0.0
+    if peak <= 0 or peak >= target_peak:
+        return audio
+    return audio * min(target_peak / peak, max_gain)
 
 
 def to_pcm16(audio: np.ndarray) -> bytes:
@@ -211,23 +220,35 @@ class PhoneSession:
             self._capturing = False
 
         self.send_json({"type": "end_of_speech"})
-        print(f"[phone] captured {len(audio) / SAMPLE_RATE:.2f}s, ended by {ended_by}")
+        peak = float(np.abs(audio).max()) if len(audio) else 0.0
+        print(
+            f"[phone] captured {len(audio) / SAMPLE_RATE:.2f}s (peak {peak:.3f}), ended by {ended_by}"
+        )
         self.server.dump_wav(audio)
-        if self._cancelled or self.closed or not has_voice(audio):
-            self._no_speech()
+        if self._cancelled or self.closed:
+            self._no_speech("cancelled")
+            return
+        if not has_voice(audio):
+            self._no_speech(
+                f"nothing loud enough to be speech (peak {peak:.3f}, ended by {ended_by})"
+            )
             return
 
         print("[phone] transcribing...")
-        text = (self.server.transcribe(audio) or "").strip()
-        if not text or self._cancelled or self.closed:
-            self._no_speech()
+        text = (self.server.transcribe(normalize(audio)) or "").strip()
+        if self._cancelled or self.closed:
+            self._no_speech("cancelled")
+            return
+        if not text:
+            self._no_speech(f"speech-to-text found no words in {len(audio) / SAMPLE_RATE:.1f}s of audio")
             return
         print(f"[phone] heard: {text!r}")
         self.send_json({"type": "transcript", "text": text})
         self.server.submit(text, self)
 
-    def _no_speech(self) -> None:
-        self.send_json({"type": "no_speech"})
+    def _no_speech(self, reason: str) -> None:
+        print(f"[phone] no speech: {reason}")
+        self.send_json({"type": "no_speech", "reason": reason})
         self.finish_turn(followup=False)
 
 

@@ -19,6 +19,7 @@ from ifa.services.phone_server import (
     StreamClosed,
     has_voice,
     load_pairing_code,
+    normalize,
     to_pcm16,
 )
 
@@ -97,6 +98,12 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(has_voice(_speech(0.5)))
         self.assertFalse(has_voice(_speech(0.1)))
         self.assertFalse(has_voice(np.zeros(16_000, dtype=np.float32)))
+
+    def test_normalize_boosts_quiet_audio_with_a_cap(self):
+        self.assertAlmostEqual(float(np.abs(normalize(_speech(0.5, 0.05))).max()), 0.5, places=2)
+        self.assertAlmostEqual(float(np.abs(normalize(_speech(0.5, 0.001))).max()), 0.02, places=3)
+        loud = _speech(0.5, 0.8)
+        self.assertIs(normalize(loud), loud)
 
     def test_pairing_code_is_generated_once_and_reused(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"IFA_PHONE_TOKEN": ""}):
