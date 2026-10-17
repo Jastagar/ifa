@@ -96,6 +96,8 @@ SETTINGS = (
             "If set, the bridge must send it in the X-IFA-Token header."),
     Setting("IFA_PHONE_ENABLED", "Phone app connection", "notifications", "bool", "1",
             "Let the Ifa Android app find this PC on the Wi-Fi and talk to Ifa (mic, wake word, voice)."),
+    Setting("IFA_PHONE_PRIORITY", "Phone takes over when connected", "notifications", "bool", "1",
+            "While the phone app is connected, the PC mic stops listening and notifications nudge the phone instead."),
     Setting("IFA_PHONE_PORT", "Phone app port", "notifications", "number", "8789",
             "WebSocket port the app connects to. Allow it through the firewall on private networks.",
             minimum=1, maximum=65535),

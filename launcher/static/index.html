@@ -57,7 +57,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:
 .field.changed label::after { content: " •"; color: var(--accent); }
 .field .err { grid-column: 2; color: var(--danger); font-size: 12px; }
 .control { display: flex; gap: 8px; align-items: center; min-width: 0; }
-input[type=text], input[type=password], input[type=number], select {
+input[type=text], input[type=password], input[type=number], select, textarea.prompt {
   width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line);
   border-radius: 7px; padding: 6px 9px; }
 input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -85,6 +85,10 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .app-row .err { grid-column: 1 / -1; color: var(--danger); font-size: 12px; }
 @media (max-width: 560px) { .app-row { grid-template-columns: minmax(0, 1fr) auto; } .app-row .cmd { grid-column: 1 / -1; grid-row: 2; } }
 .hint { color: var(--muted); font-size: 12px; margin: 8px 0; }
+textarea.prompt { width: 100%; min-height: 14em; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; box-sizing: border-box; }
+.prompt-block { padding: 10px 0; }
+.prompt-block h3 { font-size: 14px; margin: 0 0 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.prompt-block .err { color: var(--danger); font-size: 12px; }
 nav.groups { display: flex; gap: 6px; flex-wrap: wrap; }
 nav.groups a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
 nav.groups a:hover { color: var(--text); }
@@ -141,6 +145,14 @@ nav.groups a:hover { color: var(--text); }
         </div>
       </div>
     </section>
+    <section class="card" id="prompts-card">
+      <h2>Prompts</h2>
+      <div class="body">
+        <p class="hint">What Ifa is told. Saved edits apply to the next turn or notification; no restart needed.
+          Clear a box or press Reset to go back to the default.</p>
+        <div id="prompts"></div>
+      </div>
+    </section>
     <section class="card" id="custom-card">
       <h2>Other environment variables</h2>
       <div class="body">
@@ -170,10 +182,11 @@ nav.groups a:hover { color: var(--text); }
 const TOKEN = "__LAUNCHER_TOKEN__";
 const $ = (id) => document.getElementById(id);
 const state = { schema: null, edits: {}, custom: {}, errors: {}, lastLog: 0, status: "stopped", checks: null,
-  setup: null, setupRunning: false, apps: [], appsDirty: false, appErrors: {} };
+  setup: null, setupRunning: false, apps: [], appsDirty: false, appErrors: {},
+  prompts: [], promptsDirty: false, promptErrors: {} };
 
 function dirtyCount() {
-  return Object.keys(state.edits).length + Object.keys(state.custom).length + (state.appsDirty ? 1 : 0);
+  return Object.keys(state.edits).length + Object.keys(state.custom).length + (state.appsDirty ? 1 : 0) + (state.promptsDirty ? 1 : 0);
 }
 
 async function api(path, body) {
@@ -401,6 +414,27 @@ function renderApps() {
   }));
 }
 
+function renderPrompts() {
+  $("prompts").replaceChildren(...state.prompts.map((p) => {
+    const box = el("textarea", { class: "prompt", spellcheck: "false", "aria-label": p.label });
+    box.value = p.value;
+    box.addEventListener("input", () => { p.value = box.value; state.promptsDirty = true; markDirty(); });
+    const reset = el("button", { class: "small", type: "button", onclick: () => {
+      p.value = p.default; box.value = p.default; state.promptsDirty = true; markDirty(); } }, "Reset to default");
+    return el("div", { class: "prompt-block", id: "prompt-" + p.key },
+      el("h3", {}, el("span", {}, p.label, p.value.trim() !== p.default.trim() ? el("span", { class: "warn" }, " · edited") : null), reset),
+      el("p", { class: "hint" }, p.help),
+      box,
+      state.promptErrors[p.key] ? el("div", { class: "err" }, state.promptErrors[p.key]) : null);
+  }));
+}
+
+async function loadPrompts() {
+  const data = await api("/api/prompts");
+  state.prompts = data.prompts; state.promptsDirty = false; state.promptErrors = {};
+  renderPrompts(); markDirty();
+}
+
 async function loadApps() {
   const data = await api("/api/apps");
   state.apps = data.apps; state.appsDirty = false; state.appErrors = {};
@@ -438,6 +472,21 @@ async function save() {
       renderApps();
       banner(e.fields ? "Some apps are invalid. Fix the highlighted rows." : "Saving apps failed: " + e.message, "error");
       $("apps-card").scrollIntoView({ behavior: "smooth", block: "center" });
+      markDirty();
+      return false;
+    }
+  }
+  if (state.promptsDirty) {
+    try {
+      const values = Object.fromEntries(state.prompts.map((p) => [p.key, p.value]));
+      const result = await api("/api/prompts", { prompts: values });
+      state.prompts = result.prompts; state.promptsDirty = false; state.promptErrors = {};
+      renderPrompts();
+    } catch (e) {
+      state.promptErrors = e.fields || {};
+      renderPrompts();
+      banner(e.fields ? "A prompt is invalid. Fix the highlighted box." : "Saving prompts failed: " + e.message, "error");
+      $("prompts-card").scrollIntoView({ behavior: "smooth", block: "center" });
       markDirty();
       return false;
     }
@@ -532,7 +581,7 @@ window.addEventListener("beforeunload", (ev) => {
   if (dirtyCount()) { ev.preventDefault(); ev.returnValue = ""; }
 });
 
-loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
+loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps(), loadPrompts()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
 pollLogs();
 setInterval(pollLogs, 800);
 </script>

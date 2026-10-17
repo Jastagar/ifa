@@ -17,6 +17,9 @@ class _InputMode:
     def arm_followup(self) -> None:
         pass
 
+    def pause_while(self, check: Callable[[], bool]) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
@@ -67,6 +70,7 @@ class VoiceInput(_InputMode):
         )
         self._followup_until = 0.0
         self._turn_complete = threading.Event()
+        self._paused: Callable[[], bool] = lambda: False
 
 
     def start(self) -> None:
@@ -90,6 +94,9 @@ class VoiceInput(_InputMode):
             pass
         if self._thread is not None:
             self._thread.join(timeout=0.5)
+
+    def pause_while(self, check: Callable[[], bool]) -> None:
+        self._paused = check
 
     def arm_followup(self) -> None:
         if self._followup_window_sec > 0:
@@ -155,6 +162,7 @@ class VoiceInput(_InputMode):
 
     def _run_loop(self) -> None:
         needs_turn_wait = False
+        was_paused = False
         while not self._stop.is_set():
             if needs_turn_wait:
                 while not self._stop.is_set():
@@ -164,6 +172,19 @@ class VoiceInput(_InputMode):
                     return
                 self._turn_complete.clear()
                 needs_turn_wait = False
+
+            if self._paused():
+                if not was_paused:
+                    print("[voice] phone connected: PC mic paused")
+                    was_paused = True
+                try:
+                    self._read_wake_chunk()
+                except Exception:
+                    time.sleep(0.08)
+                continue
+            if was_paused:
+                print("[voice] phone disconnected: PC mic listening again")
+                was_paused = False
 
             in_followup = self._in_followup_window()
             self._followup_until = 0.0
@@ -185,7 +206,7 @@ class VoiceInput(_InputMode):
                     print("[voice] waiting for wake word...")
                     score = self._listener.wait_for_wake(
                         read_chunk=self._read_wake_chunk,
-                        interrupt=self._notification_waiting,
+                        interrupt=lambda: self._notification_waiting() or self._paused(),
                     )
                     if self._stop.is_set():
                         return

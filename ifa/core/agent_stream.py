@@ -6,7 +6,8 @@ import httpx
 from ifa.config.settings import OLLAMA_MODEL
 from ifa.core.context import AgentContext
 from ifa.core.memory import Memory, tool_step
-from ifa.core.personality import persona, tool_framing
+from ifa.core.personality import tool_framing
+from ifa.services import prompts
 from ifa.services.ollama_client import (
     build_tool_result_message,
     stream_chat,
@@ -30,7 +31,7 @@ SPEECH_BATCH_CHARS = 220
 
 
 def _build_system_prompt(nonce: str) -> str:
-    parts = [persona, tool_framing(nonce), VibeManager.get_system_based_on_vibe()]
+    parts = [prompts.get("persona"), tool_framing(nonce), VibeManager.get_system_based_on_vibe()]
     memory = load_memories()
     if memory:
         parts.append(

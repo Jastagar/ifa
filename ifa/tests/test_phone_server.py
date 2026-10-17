@@ -14,9 +14,11 @@ import numpy as np
 from ifa.services.phone_server import (
     DISCOVERY_PROBE,
     PcmBuffer,
+    PhoneSession,
     PhoneServer,
     PhoneTTS,
     StreamClosed,
+    capture_options,
     has_voice,
     load_pairing_code,
     normalize,
@@ -127,6 +129,58 @@ class HelperTests(unittest.TestCase):
     def test_spaces_in_the_offered_code_are_ignored(self):
         server = PhoneServer(lambda *_: None, FakeTTS(), pairing_code="123456")
         self.assertEqual(server.check_pairing("10.0.0.2", " 123 456 "), 200)
+
+
+class CaptureOptionsTests(unittest.TestCase):
+    def test_reads_and_clamps_phone_settings(self):
+        self.assertEqual(capture_options({"silenceMs": 1500, "vadThreshold": 0.5}), {"silence_ms": 1500, "threshold": 0.5})
+        self.assertEqual(capture_options({"silenceMs": 50, "vadThreshold": 2}), {"silence_ms": 300, "threshold": 0.95})
+        self.assertEqual(capture_options({"silenceMs": "x", "vadThreshold": True}), {})
+
+
+class NudgeTests(unittest.TestCase):
+    def make_session(self):
+        server = PhoneServer(lambda *_: None, FakeTTS(), pairing_code="1",
+                             urgent_clip=lambda: np.zeros(2400, dtype=np.float32))
+        session = PhoneSession.__new__(PhoneSession)
+        PhoneSession.__init__(session, server, None, "phone")
+        sent = []
+        session.send_json = sent.append
+        session.send_audio = lambda audio, sr: sent.append({"type": "audio"})
+        return session, sent
+
+    def wait_for(self, sent, kind):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if any(m.get("type") == kind for m in sent):
+                return
+            time.sleep(0.01)
+        self.fail(f"no {kind} in {sent}")
+
+    def test_urgent_nudge_plays_the_announcement_then_listens(self):
+        session, sent = self.make_session()
+        session.nudge("urgent")
+        self.wait_for(sent, "turn_end")
+        self.assertEqual([m["type"] for m in sent], ["nudge", "turn_end"])
+        self.assertEqual(sent[0]["level"], "urgent")
+        self.assertTrue(sent[-1]["followup"])
+        self.assertTrue(sent[-1]["cue"])
+        self.assertEqual(sent[-1]["followupSec"], session.server.notification_listen_sec)
+
+    def test_nudge_waits_for_the_current_turn(self):
+        session, sent = self.make_session()
+        self.assertTrue(session._begin())
+        session.nudge("normal")
+        self.assertEqual(sent, [])
+        session.finish_turn()
+        self.wait_for(sent, "turn_end")
+        self.assertEqual([m["type"] for m in sent], ["nudge", "turn_end"])
+        self.assertFalse(session._busy)
+
+    def test_server_nudges_only_with_a_phone_and_priority(self):
+        server = PhoneServer(lambda *_: None, FakeTTS(), pairing_code="1")
+        self.assertFalse(server.nudge("normal"))
+        self.assertFalse(server.has_priority())
 
 
 class PhoneTTSTests(unittest.TestCase):

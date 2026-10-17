@@ -213,13 +213,22 @@ def run() -> None:
             done.wait()
 
     input_mode = init_input(tts, notifications, announce_urgent)
-    if not isinstance(input_mode, VoiceInput):
-        def announce_in_text_mode(level: str) -> None:
-            print("\n🔔 New notification. Ask 'what is it?' to hear it.")
-            if level == "urgent":
-                announce_urgent()
+    phones = None
 
-        notifications.on_announce = announce_in_text_mode
+    def announce_in_text_mode(level: str) -> None:
+        print("\n🔔 New notification. Ask 'what is it?' to hear it.")
+        if level == "urgent":
+            announce_urgent()
+
+    def route_announcement(level: str) -> None:
+        if phones is not None and phones.nudge(level):
+            return
+        if isinstance(input_mode, VoiceInput):
+            notifications.hold_announcement(level)
+        else:
+            announce_in_text_mode(level)
+
+    notifications.on_announce = route_announcement
     notifications.start()
 
     VibeManager(tts)
@@ -240,7 +249,12 @@ def run() -> None:
             turns.put((input_mode.get(), None))
 
     threading.Thread(target=pump_local_input, name="ifa-local-input", daemon=True).start()
-    start_phone_server(lambda text, phone: turns.put((text, phone)), tts, notifications)
+    phones = start_phone_server(
+        lambda text, phone: turns.put((text, phone)), tts, notifications,
+        urgent_clip=lambda: fillers.clip(URGENT_ANNOUNCEMENT),
+    )
+    if phones is not None:
+        input_mode.pause_while(phones.has_priority)
 
     while True:
         raw_input, phone = turns.get()

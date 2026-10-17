@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ifa.services import custom_apps
+from ifa.services import custom_apps, prompts
 from ifa.skills.enums import App
 from launcher import env_file
 from launcher.agent_process import AgentProcess, LogBuffer
@@ -30,6 +30,7 @@ class Launcher:
         self.repo_root = repo_root
         self.env_path = repo_root / ".env"
         self.apps_path = repo_root / "apps.json"
+        self.prompts_path = repo_root / "prompts.json"
         self.log = agent.log if agent else LogBuffer()
         python = venv_python(repo_root) or Path(sys.executable)
         self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root), log=self.log)
@@ -119,6 +120,20 @@ class Launcher:
 
     def apps(self) -> dict:
         return {"apps": custom_apps.load(self.apps_path), "builtin": [a.value for a in App]}
+
+    def prompts(self) -> dict:
+        overrides = prompts.load(self.prompts_path)
+        return {"prompts": [
+            {"key": key, "label": label, "help": help, "default": default, "value": overrides.get(key, default)}
+            for key, label, help, default in prompts.PROMPTS
+        ]}
+
+    def save_prompts(self, body: dict) -> dict:
+        values, errors = prompts.validate(body.get("prompts"))
+        if errors:
+            raise SettingsError(errors)
+        prompts.save(values, self.prompts_path)
+        return self.prompts()
 
     def save_apps(self, body: dict) -> dict:
         apps, errors = custom_apps.validate(body.get("apps"))
@@ -219,6 +234,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 self._json(HTTPStatus.OK, launcher.status())
             elif url.path == "/api/apps":
                 self._json(HTTPStatus.OK, launcher.apps())
+            elif url.path == "/api/prompts":
+                self._json(HTTPStatus.OK, launcher.prompts())
             elif url.path == "/api/setup":
                 self._json(HTTPStatus.OK, launcher.setup_steps())
             elif url.path == "/api/logs":
@@ -243,6 +260,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
                     self._json(HTTPStatus.OK, launcher.agent.status())
                 elif path == "/api/apps":
                     self._json(HTTPStatus.OK, launcher.save_apps(body))
+                elif path == "/api/prompts":
+                    self._json(HTTPStatus.OK, launcher.save_prompts(body))
                 elif path == "/api/setup/run":
                     self._json(HTTPStatus.OK, launcher.run_setup(body))
                 elif path == "/api/setup/stop":

@@ -11,6 +11,7 @@ from typing import Callable
 
 import numpy as np
 
+from ifa.services.notifications import URGENT_ANNOUNCEMENT
 from ifa.services.pairing import lan_address, load_pairing_code
 
 PROTOCOL_VERSION = 1
@@ -75,6 +76,17 @@ class PcmBuffer:
             return chunk
 
 
+def capture_options(message: dict) -> dict:
+    options = {}
+    silence = message.get("silenceMs")
+    if isinstance(silence, (int, float)) and not isinstance(silence, bool):
+        options["silence_ms"] = int(min(max(silence, 300), 5000))
+    threshold = message.get("vadThreshold")
+    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
+        options["threshold"] = float(min(max(threshold, 0.1), 0.95))
+    return options
+
+
 def has_voice(audio: np.ndarray) -> bool:
     return len(audio) >= MIN_VOICE_SAMPLES and float(np.abs(audio).max()) >= MIN_VOICE_PEAK
 
@@ -102,6 +114,7 @@ class PhoneSession:
         self._busy = False
         self._capturing = False
         self._cancelled = False
+        self._pending_nudge: str | None = None
 
     def send_json(self, payload: dict) -> None:
         self._post(json.dumps(payload, ensure_ascii=False))
@@ -118,12 +131,52 @@ class PhoneSession:
 
     def finish_turn(self, followup: bool = True) -> None:
         with self._lock:
-            self._busy = False
+            nudge, self._pending_nudge = self._pending_nudge, None
+            if nudge is None:
+                self._busy = False
+        if nudge is not None:
+            self._run_nudge(nudge)
+            return
         self.send_json({
             "type": "turn_end",
             "followup": followup and self.server.followup_sec > 0,
             "followupSec": self.server.followup_sec,
         })
+
+    def nudge(self, level: str) -> None:
+        with self._lock:
+            if self._busy:
+                if self._pending_nudge != "urgent":
+                    self._pending_nudge = level
+                return
+            self._busy = True
+        self._run_nudge(level)
+
+    def _run_nudge(self, level: str) -> None:
+        self.send_json({"type": "nudge", "level": level})
+
+        def run() -> None:
+            try:
+                if level == "urgent":
+                    phone_tts = PhoneTTS(self.server.tts, self)
+                    clip = self.server.urgent_clip()
+                    if clip is not None:
+                        phone_tts.play_clip(clip, URGENT_ANNOUNCEMENT)
+                    else:
+                        phone_tts.enqueue(URGENT_ANNOUNCEMENT)
+                    phone_tts.wait_until_done()
+            except Exception as exc:
+                print(f"[phone] couldn't play the announcement: {exc}")
+            with self._lock:
+                self._busy = False
+            self.send_json({
+                "type": "turn_end",
+                "followup": True,
+                "followupSec": self.server.notification_listen_sec,
+                "cue": True,
+            })
+
+        threading.Thread(target=run, name="ifa-phone-nudge", daemon=True).start()
 
     def close(self) -> None:
         self.closed = True
@@ -156,7 +209,7 @@ class PhoneSession:
         kind = message.get("type")
         if kind == "start":
             timeout = message.get("startTimeoutMs")
-            self._start_listening(int(timeout) if timeout else None)
+            self._start_listening(int(timeout) if timeout else None, capture_options(message))
         elif kind == "stop":
             self.audio.close(f"the phone ({message.get('reason') or 'stop'})")
         elif kind == "cancel":
@@ -178,7 +231,7 @@ class PhoneSession:
             self._busy = True
             return True
 
-    def _start_listening(self, start_timeout_ms: int | None) -> None:
+    def _start_listening(self, start_timeout_ms: int | None, options: dict | None = None) -> None:
         if not self._begin():
             self.send_json({"type": "error", "message": "busy"})
             return
@@ -187,7 +240,7 @@ class PhoneSession:
         self._capturing = True
         self.send_json({"type": "listening"})
         threading.Thread(
-            target=self._capture, args=(start_timeout_ms,), name="ifa-phone-capture", daemon=True
+            target=self._capture, args=(start_timeout_ms, options or {}), name="ifa-phone-capture", daemon=True
         ).start()
 
     def _start_text(self, text: str) -> None:
@@ -198,7 +251,7 @@ class PhoneSession:
             return
         self.server.submit(text, self)
 
-    def _capture(self, start_timeout_ms: int | None) -> None:
+    def _capture(self, start_timeout_ms: int | None, options: dict) -> None:
         collected: list[np.ndarray] = []
 
         def read_chunk() -> np.ndarray:
@@ -207,7 +260,7 @@ class PhoneSession:
             return chunk
 
         try:
-            audio = self.server.capture(read_chunk, start_timeout_ms=start_timeout_ms)
+            audio = self.server.capture(read_chunk, start_timeout_ms=start_timeout_ms, **options)
             ended_by = "Ifa's VAD" if len(audio) else "the start timeout (Ifa's VAD never heard speech)"
         except StreamClosed as exc:
             audio = np.concatenate(collected) if collected else np.zeros(0, dtype=np.float32)
@@ -309,6 +362,7 @@ class PhoneServer:
         capture: Callable | None = None,
         transcribe: Callable[[np.ndarray], str] | None = None,
         warm_up: Callable[[], object] | None = None,
+        urgent_clip: Callable[[], np.ndarray | None] | None = None,
     ) -> None:
         self.submit = submit
         self.tts = tts
@@ -318,6 +372,11 @@ class PhoneServer:
         self.discovery_port = discovery_port or int(os.environ.get("IFA_PHONE_DISCOVERY_PORT", "8788"))
         self.pairing_code = pairing_code or load_pairing_code()
         self.followup_sec = float(os.environ.get("IFA_FOLLOWUP_WINDOW_SEC", "5"))
+        self.notification_listen_sec = float(os.environ.get("IFA_NOTIF_LISTEN_SEC", "8"))
+        self.priority = os.environ.get("IFA_PHONE_PRIORITY", "1").lower() not in {"0", "false", "no", "off"}
+        self.urgent_clip = urgent_clip or (lambda: None)
+        self._sessions: list[PhoneSession] = []
+        self._sessions_lock = threading.Lock()
         self.name = socket.gethostname()
         self._capture = capture
         self._transcribe = transcribe
@@ -327,11 +386,11 @@ class PhoneServer:
         self._ready = threading.Event()
         self._start_error: Exception | None = None
 
-    def capture(self, read_chunk, start_timeout_ms: int | None = None) -> np.ndarray:
+    def capture(self, read_chunk, start_timeout_ms: int | None = None, **options) -> np.ndarray:
         if self._capture is None:
             from ifa.voice.capture import capture_utterance
             self._capture = capture_utterance
-        return self._capture(read_chunk, start_timeout_ms=start_timeout_ms)
+        return self._capture(read_chunk, start_timeout_ms=start_timeout_ms, **options)
 
     def transcribe(self, audio: np.ndarray) -> str:
         if self._transcribe is None:
@@ -356,6 +415,19 @@ class PhoneServer:
 
         threading.Thread(target=run, name="ifa-phone-warmup", daemon=True).start()
 
+    def has_priority(self) -> bool:
+        with self._sessions_lock:
+            return self.priority and bool(self._sessions)
+
+    def nudge(self, level: str) -> bool:
+        with self._sessions_lock:
+            session = self._sessions[-1] if self.priority and self._sessions else None
+        if session is None:
+            return False
+        print(f"[phone] {level} notification: nudging the phone")
+        session.nudge(level)
+        return True
+
     def receive_notification(self, message: dict) -> None:
         if self.notifications is None:
             return
@@ -371,7 +443,6 @@ class PhoneServer:
             "wakeThreshold": float(os.environ.get("IFA_WAKE_THRESHOLD", "0.7")),
             "wakeConsecutive": int(os.environ.get("IFA_WAKE_CONSECUTIVE", "2")),
             "followupSec": self.followup_sec,
-            "vadSilenceMs": int(os.environ.get("IFA_VAD_SILENCE_MS", "1500")),
         }
 
     def dump_wav(self, audio: np.ndarray) -> None:
@@ -473,7 +544,9 @@ class PhoneServer:
         writer = asyncio.create_task(session.run_writer(ws))
         session.send_json(self.ready_payload())
         self.warm_up_in_background()
-        print(f"[phone] connected: {peer}")
+        with self._sessions_lock:
+            self._sessions.append(session)
+        print(f"[phone] connected: {peer}" + (" (PC mic paused while the phone is connected)" if self.priority else ""))
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
@@ -487,6 +560,8 @@ class PhoneServer:
                     except (ValueError, TypeError) as exc:
                         session.send_json({"type": "error", "message": str(exc)})
         finally:
+            with self._sessions_lock:
+                self._sessions.remove(session)
             session.close()
             try:
                 await asyncio.wait_for(writer, timeout=1)
@@ -517,12 +592,12 @@ class PhoneServer:
                 time.sleep(1)
 
 
-def start_phone_server(submit, tts, notifications=None) -> PhoneServer | None:
+def start_phone_server(submit, tts, notifications=None, urgent_clip=None) -> PhoneServer | None:
     if not phone_enabled():
         print("[phone] phone app connection disabled (IFA_PHONE_ENABLED=0)")
         return None
     try:
-        return PhoneServer(submit, tts, notifications).start()
+        return PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip).start()
     except Exception as exc:
         print(f"[phone] could not start the phone server: {exc}")
         return None

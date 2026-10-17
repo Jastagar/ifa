@@ -22,6 +22,7 @@ It opens a local page where you can:
 - add any other environment variable the agent should get
 - add apps Ifa can open by name ("open Discord"): a name plus a program path, a link like `steam://rungameid/570`, or a command. Stored in `apps.json` (not committed)
 - launch / stop Ifa and watch its output; in text mode, type to Ifa from the page
+- edit the prompts: Ifa's personality, how strict the notification urgency check is, and how notifications are summarised. Saved to `prompts.json` (not committed) and used from the next turn, no restart
 
 Adding a new setting means adding one `Setting(...)` line to `launcher/settings_schema.py`; the page builds itself from that list. The launcher only listens on `127.0.0.1` and never sends secret values back to the browser.
 
@@ -40,6 +41,8 @@ The Android app ([ifa.app](https://github.com/jastagar/ifa.app)) connects to Ifa
 ```
 
 Type that code into the app once. The app finds the PC by broadcasting on UDP 8788 (or you can type the PC's IP). On Windows, allow Python through the firewall on private networks. Phone turns share Ifa's memory with the PC and run one at a time with it. Speech-to-text, the agent and the voice run on the PC, and the reply audio streams back to the phone instead of playing on the PC speakers.
+
+While a phone is connected it takes over (`IFA_PHONE_PRIORITY`, default `1`): the PC mic stops listening for the wake word, and notifications nudge the phone (urgent announcement, then it listens without the wake word) instead of the PC. Disconnect the phone and the PC takes over again.
 
 Settings (launcher: Notifications): `IFA_PHONE_ENABLED` (default `1`), `IFA_PHONE_PORT` (`8789`), `IFA_PHONE_DISCOVERY_PORT` (`8788`), `IFA_PHONE_TOKEN` (the pairing code; empty means Ifa generates a 6-digit code and saves it in `.phone_token`). Five wrong codes from one address lock it out for a minute. Code: `ifa/services/phone_server.py`.
 
