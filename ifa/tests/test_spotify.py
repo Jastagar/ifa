@@ -28,6 +28,21 @@ class SpotifySkillTests(unittest.TestCase):
         self.assertEqual(self.skill.play("tum hi ho"), "Playing Tum Hi Ho by Arijit Singh.")
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["spotify:track:1"])
 
+    def test_pause_says_what_it_paused(self):
+        self.sp.current_playback.return_value = {"is_playing": True, "item": TRACK}
+        self.assertEqual(self.skill.pause(), "Paused Tum Hi Ho by Arijit Singh.")
+        self.sp.pause_playback.assert_called_once()
+
+    def test_pause_with_nothing_playing(self):
+        self.sp.current_playback.return_value = None
+        self.assertEqual(self.skill.pause(), "Paused.")
+
+    def test_now_playing(self):
+        self.sp.current_playback.return_value = {"is_playing": False, "item": TRACK}
+        self.assertEqual(self.skill.now_playing(), "Paused on Spotify: Tum Hi Ho by Arijit Singh.")
+        self.sp.current_playback.return_value = None
+        self.assertEqual(self.skill.now_playing(), "Nothing is playing on Spotify.")
+
     def test_play_without_a_query_resumes(self):
         self.assertEqual(self.skill.play(None), "Resumed playback.")
         self.sp.start_playback.assert_called_once_with(device_id="pc")

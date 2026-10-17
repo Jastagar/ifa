@@ -23,6 +23,8 @@ def _handler(args: dict, ctx: AgentContext) -> str:
         return spotify.play(args.get("query"), args.get("choice"), args.get("artist"))
     if action == "pause":
         return spotify.pause()
+    if action == "now_playing":
+        return spotify.now_playing()
     if action == "next":
         return spotify.next()
     return "Invalid action"
@@ -37,12 +39,14 @@ TOOL = Tool(
         "and artist if he named one. Then read the numbered results and call action play with choice set to the "
         "number of the closest match, preferring the original over remix, slowed, lofi or cover versions unless "
         "he asked for one. Never say a song is playing before the play call succeeds. "
-        "Action play with no choice resumes playback; pause and next control what is playing."
+        "Action play with no choice resumes playback; pause and next control what is playing. "
+        "Pause and now_playing return the song's name, so use it when Sir says 'this song' or 'it', "
+        "for example to play the same song on YouTube with open_website."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["search", "play", "pause", "next"]},
+            "action": {"type": "string", "enum": ["search", "play", "pause", "next", "now_playing"]},
             "query": {"type": "string", "description": "Song name for search, as Sir said it."},
             "artist": {"type": "string", "description": "Artist name, only if Sir named one."},
             "choice": {"type": "integer", "minimum": 1, "description": "Result number from the last search."},

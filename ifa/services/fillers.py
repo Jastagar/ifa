@@ -20,6 +20,7 @@ BY_TOOL = {
     "analyze_screen": "Let me take a look.",
     "spotify_control": "On it.",
     "open_app": "Opening that.",
+    "open_website": "Opening that.",
     "launch_game": "Starting it up.",
     "switch_mode": "Switching modes.",
     "whats_app": "Sending that over.",

@@ -39,8 +39,20 @@ class BenchCase:
 FAKE_RESULTS = {
     "get_time": "Current time is 14:05",
     "analyze_screen": "VS Code is open showing a TypeError in orchestrator.py on line 40.",
+    "spotify_control": "Paused Tum Hi Ho by Arijit Singh.",
 }
 DEFAULT_FAKE_RESULT = "ok"
+
+
+def _youtube(query_word: str, play: bool = True) -> Callable[[list[Call]], bool]:
+    def check(calls: list[Call]) -> bool:
+        return any(
+            c.name == "open_website" and c.args.get("site") == "youtube"
+            and query_word in str(c.args.get("query", "")).lower()
+            and bool(c.args.get("play", True)) == play
+            for c in calls
+        )
+    return check
 
 
 def _task_mentions(word: str) -> Callable[[list[Call]], bool]:
@@ -74,7 +86,11 @@ BENCH: list[BenchCase] = [
     BenchCase("fire off my morning_routine automation", ["call_n8n_workflow"], "call_n8n_workflow"),
 
     BenchCase("open vs code", ["open_app"], "open_app"),
-    BenchCase("open youtube in the browser", ["open_app"], "open_app"),
+
+    BenchCase("open youtube in the browser", ["open_website"], "open_website"),
+    BenchCase("play tum hi ho on youtube", ["open_website"], "open_website", check=_youtube("tum hi ho")),
+    BenchCase("search youtube for lofi beats", ["open_website"], "open_website", check=_youtube("lofi", play=False)),
+    BenchCase("google the weather in delhi", ["open_website"], "open_website"),
 
     BenchCase("play some lofi on spotify", ["spotify_control"], "spotify_control"),
     BenchCase("pause the music", ["spotify_control"], "spotify_control"),
@@ -105,6 +121,11 @@ BENCH: list[BenchCase] = [
         ["get_time", "set_reminder"], "multi_step",
     ),
     BenchCase(
+        "stop this song on spotify and play it on youtube",
+        ["spotify_control", "open_website"], "multi_step", ordered=True,
+        check=_youtube("tum hi ho"),
+    ),
+    BenchCase(
         "turn on gaming mode and launch valorant",
         ["switch_mode", "launch_game"], "multi_step",
     ),
@@ -116,6 +137,7 @@ THRESHOLDS = {
     "remember": 0.66,
     "call_n8n_workflow": 0.66,
     "open_app": 0.75,
+    "open_website": 0.75,
     "spotify_control": 0.75,
     "switch_mode": 0.75,
     "analyze_screen": 0.75,
@@ -257,7 +279,7 @@ def _print_report(summary: dict) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Measure how reliably the model picks the right tools.")
     parser.add_argument("--repeat", type=int, default=1, help="runs per case")
     parser.add_argument("--only", help="run a single category, e.g. multi_step")
     parser.add_argument("--json", action="store_true", help="also print the JSON summary")

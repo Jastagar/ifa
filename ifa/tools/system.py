@@ -26,8 +26,7 @@ def build_tool(apps_file=custom_apps.APPS_FILE) -> Tool:
             "without asking for confirmation. "
             "If the request also asks for something inside the app (for example 'open Spotify and play X'), "
             "call open_app first and then the tool for the rest (spotify_control); the other tool never opens the app. "
-            "To open a website, use app 'brave' and put www.<websitename> in args. "
-            "For adult or NSFW content (sex, violence, drugs) or when the user asks for it, use 'private brave'. "
+            "To open a website, search, or play something on YouTube, use open_website instead. "
             "Pick the closest name from the list, even if the user says it differently."
         ),
         parameters={
@@ -40,7 +39,7 @@ def build_tool(apps_file=custom_apps.APPS_FILE) -> Tool:
                 },
                 "args": {
                     "type": "string",
-                    "description": "Only for brave / private brave: the website to open, e.g. www.youtube.com.",
+                    "description": "Only for brave / private brave: a website to open. Prefer open_website.",
                 },
             },
             "required": ["app"],

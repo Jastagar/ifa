@@ -100,6 +100,11 @@ def match_score(track: dict, query: str, artist: str | None, rank: int) -> float
     return score - 0.02 * rank
 
 
+def song_name(track: dict) -> str:
+    artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
+    return f"{track['name']} by {artists}" if artists else track["name"]
+
+
 def describe(track: dict) -> str:
     artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
     album = track.get("album", {})
@@ -124,7 +129,10 @@ class SpotifySkill:
         return self._run(self._play, query, choice, artist)
 
     def pause(self) -> str:
-        return self._run(lambda: (self.sp.pause_playback(), "Paused.")[1])
+        return self._run(self._pause)
+
+    def now_playing(self) -> str:
+        return self._run(self._now_playing)
 
     def next(self) -> str:
         return self._run(lambda: (self.sp.next_track(), "Skipped to the next track.")[1])
@@ -178,6 +186,24 @@ class SpotifySkill:
         self.sp.start_playback(device_id=self._device(), uris=[track["uri"]])
         artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
         return f"Playing {track['name']}" + (f" by {artists}." if artists else ".")
+
+    def _current_track(self) -> dict | None:
+        playback = self.sp.current_playback() or {}
+        item = playback.get("item")
+        return item if isinstance(item, dict) and item.get("name") else None
+
+    def _pause(self) -> str:
+        track = self._current_track()
+        self.sp.pause_playback()
+        return f"Paused {song_name(track)}." if track else "Paused."
+
+    def _now_playing(self) -> str:
+        playback = self.sp.current_playback() or {}
+        track = self._current_track()
+        if track is None:
+            return "Nothing is playing on Spotify."
+        state = "Playing" if playback.get("is_playing") else "Paused"
+        return f"{state} on Spotify: {song_name(track)}."
 
     def _device(self) -> str:
         for attempt in range(DEVICE_WAIT_SEC + 1):

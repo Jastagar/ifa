@@ -1,3 +1,4 @@
+from ifa.skills import browser
 from ifa.skills.enums import App
 from datetime import datetime
 import re
@@ -12,8 +13,6 @@ APP_COMMANDS = {
     "win32": {
         App.SPOTIFY: "spotify:",
         App.VS_CODE: "code",
-        App.BRAVE: "C:/Progra~1/BraveSoftware/Brave-Browser/Application/brave.exe",
-        App.PRIVATE_BRAVE: ["C:/Progra~1/BraveSoftware/Brave-Browser/Application/brave.exe","--incognito"],
     },
     "darwin": {
         App.SPOTIFY: ["open", "-a", "Spotify"],
@@ -57,6 +56,11 @@ class Application:
 
         if platform not in APP_COMMANDS:
             raise ValueError(f"Unsupported platform: {platform}")
+
+        if app in (App.BRAVE, App.PRIVATE_BRAVE):
+            url = browser.normalize_url(arguments) if arguments.strip() else ""
+            browser.open_url(url, private=app == App.PRIVATE_BRAVE)
+            return
 
         command_map = APP_COMMANDS[platform]
 
