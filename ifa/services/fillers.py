@@ -28,6 +28,7 @@ BY_TOOL = {
     "whats_app": "Sending that over.",
     "call_n8n_workflow": "Running that workflow.",
     "read_notifications": "Let me check.",
+    "calendar": "Checking your calendar.",
 }
 
 

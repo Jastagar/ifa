@@ -127,6 +127,9 @@ SETTINGS = (
     Setting("SPOTIFY_CLIENT_SECRET", "Spotify client secret", "keys", "secret", ""),
     Setting("SPOTIFY_REDIRECT_URI", "Spotify redirect URI", "keys", "text",
             "http://127.0.0.1:8888/callback", "Must match the URI registered in the Spotify app."),
+    Setting("IFA_GOOGLE_CREDENTIALS", "Google OAuth client file", "keys", "text", "google_credentials.json",
+            "The 'Desktop app' OAuth client JSON from Google Cloud Console (Calendar API enabled). "
+            "Then run Setup, Log in to Google Calendar."),
     Setting("HF_TOKEN", "Hugging Face token", "keys", "secret", "",
             "Only needed to download gated models or avoid rate limits."),
 

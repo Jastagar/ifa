@@ -51,6 +51,29 @@ Runs one command in `cmd.exe` (Windows) or the shell (macOS), and reads the outp
 - **Limits:** output is cut to the last 1,500 characters, and commands are killed (the whole process tree) after `IFA_COMMAND_TIMEOUT_SEC` (30). `IFA_COMMANDS_ENABLED=0` removes the tool.
 - **Prompt:** prefer simple commands, and describe them in plain words when asking. One early run proposed a 120-character `awk` pipeline and read it aloud.
 
+## Google Calendar (`calendar`)
+
+**Files:** [ifa/skills/google_calendar.py](../../ifa/skills/google_calendar.py), [ifa/tools/calendar.py](../../ifa/tools/calendar.py)
+
+One tool with three actions:
+- **`list`** shows events for a day or range.
+- **`add`** creates an event.
+- **`remove`** deletes one event.
+
+**Decisions and why**
+- **REST API plus Google's official auth libraries** (`google-auth`, `google-auth-oauthlib`), not `google-api-python-client`. That client pulls in `google-api-core` and protobuf, and Ifa's lock pins protobuf 7. The Google packages fit the lock with no existing pin changing.
+- **Dates for `list` are worked out in code.** today, tomorrow, kal, a weekday, "next Friday", this week, next week, or a date. Small models get date arithmetic wrong. Day words the model puts in the search words ("gym session Friday") are moved into the day automatically.
+- **`add` uses Google's Quick Add.** Google parses "Dentist tomorrow at 5pm for 30 minutes" itself, and Ifa repeats back the date and time Google understood, so a misparse is caught at once.
+- **`remove` deletes only when exactly one event matches.** With several matches it lists them and Ifa asks which. Deleted events go to Google Calendar's trash, where they can be restored.
+- **Login is a one-time step,** like Spotify. The token is saved in `.google_token.json` (gitignored, mode 600), and the scope is `calendar.events` only.
+- **Probe on qwen3.5:9b:** every list, add and remove request picked `calendar` with sensible arguments, and "remind me in 10 minutes" stayed with `set_reminder`.
+
+**One-time Google Cloud setup**
+1. At console.cloud.google.com, create a project and enable the **Google Calendar API**.
+2. Under **OAuth consent screen**, choose External, add your Gmail as a test user, then **Publish app** ("In production"). Apps left in "Testing" lose their login after 7 days. The "unverified app" warning is fine for your own account.
+3. Under **Credentials**, create an **OAuth client ID** of type **Desktop app**, download the JSON, and save it as `google_credentials.json` in the Ifa folder. A different path can be set in the launcher under Keys.
+4. In the launcher, Setup: **Log in to Google Calendar**.
+
 ## WhatsApp (`whats_app`)
 
 `pywhatkit` is imported only when sending. **Why:** importing it pinged google.com and raised an error offline, which stopped Ifa from starting.

@@ -123,3 +123,9 @@ Every significant choice since the October 2026 rework: what we decided, why, an
   - The action check also catches a first sentence that promises an action when no tool has run.
 - **Measured:** 18 requests, 1 ask-back (a reasonable WhatsApp detail question). run_command still proposes first.
 
+### 30. Google Calendar via REST and official auth libraries; dates in code; Quick Add
+- **Why:** you asked for a calendar skill.
+- **Library:** `google-api-python-client` would pull protobuf, which conflicts with the lock. The REST API plus `google-auth` fit without changing a pin.
+- **Dates:** small models get dates wrong, so `list` ranges are computed in code and `add` relies on Google's Quick Add parser, with Ifa repeating back what Google understood.
+- **Removal:** happens only on a single match, and lands in the trash.
+

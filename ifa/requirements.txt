@@ -84,3 +84,6 @@ mss
 Pillow
 spotipy
 pywhatkit
+# Google Calendar (OAuth login + REST calls; no google-api-python-client, which pulls protobuf)
+google-auth
+google-auth-oauthlib

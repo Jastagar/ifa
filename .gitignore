@@ -24,3 +24,11 @@ voiceprint.json
 .phone_token
 prompts.json
 PyWhatKit_DB.txt
+
+# Google Calendar login
+.google_token.json
+google_credentials.json
+
+# Leftovers from the removed Hinglish voice. Safe to delete these folders.
+/venv-voice/
+/voice_server/

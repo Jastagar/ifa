@@ -215,6 +215,13 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
                                  if not (values.get("SPOTIFY_CLIENT_ID") and values.get("SPOTIFY_CLIENT_SECRET"))
                                  else None if installed_version(repo_root, "spotipy")
                                  else "Install packages first")),
+        Step("google_login", "Log in to Google Calendar",
+             "Opens Google in your browser once and saves the login to .google_token.json, so Ifa can read "
+             "and add calendar events.",
+             [vpy, "-m", "ifa.skills.google_calendar"], done=(repo_root / ".google_token.json").exists(),
+             blocked=no_venv or (None if (repo_root / (values.get("IFA_GOOGLE_CREDENTIALS") or "google_credentials.json")).exists()
+                                 else "Download a Desktop-app OAuth client from Google Cloud Console and save it as "
+                                      "google_credentials.json in the Ifa folder (see docs/design/tools.md)")),
         Step("voice_models", "Download voice models",
              "Caches the wake-word and Whisper models so voice mode works offline. Safe to re-run.",
              [vpy, "-m", "scripts.setup_voice_models"], blocked=no_venv),
