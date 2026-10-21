@@ -14,6 +14,16 @@ def device(id, active=False, restricted=False):
     return {"id": id, "is_active": active, "is_restricted": restricted}
 
 
+def report_what_was_started(sp):
+    def current():
+        explicit = sp.current_playback.return_value
+        if explicit is None or isinstance(explicit, dict):
+            return explicit
+        uris = (sp.start_playback.call_args.kwargs.get("uris") if sp.start_playback.call_args else None) or ["x"]
+        return {"is_playing": True, "item": {"uri": uris[0], "name": "x"}, "device": {"name": "PC"}}
+    sp.current_playback.side_effect = current
+
+
 class SpotifySkillTests(unittest.TestCase):
     def setUp(self):
         self.auth = MagicMock()
@@ -23,9 +33,10 @@ class SpotifySkillTests(unittest.TestCase):
         self.sp.devices.return_value = {"devices": [device("phone"), device("pc", active=True)]}
         self.sleeps = []
         self.skill = SpotifySkill(auth=self.auth, client=self.sp, sleep=self.sleeps.append)
+        report_what_was_started(self.sp)
 
     def test_plays_the_top_result_on_the_active_device(self):
-        self.assertEqual(self.skill.play("tum hi ho"), "Playing Tum Hi Ho by Arijit Singh.")
+        self.assertEqual(self.skill.play("tum hi ho"), "Playing Tum Hi Ho by Arijit Singh on PC.")
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["spotify:track:1"])
 
     def test_pause_says_what_it_paused(self):
@@ -44,8 +55,8 @@ class SpotifySkillTests(unittest.TestCase):
         self.assertEqual(self.skill.now_playing(), "Nothing is playing on Spotify.")
 
     def test_play_without_a_query_resumes(self):
-        self.assertEqual(self.skill.play(None), "Resumed playback.")
-        self.sp.start_playback.assert_called_once_with(device_id="pc")
+        self.assertEqual(self.skill.play(None), "Resumed playback on PC.")
+        self.sp.start_playback.assert_called_once_with(device_id="pc", uris=None)
 
     def test_no_search_results(self):
         self.sp.search.return_value = {"tracks": {"items": []}}
@@ -62,7 +73,7 @@ class SpotifySkillTests(unittest.TestCase):
     def test_waits_for_a_device_that_is_still_starting(self):
         self.sp.devices.side_effect = [{"devices": []}, {"devices": []}, {"devices": [device("pc")]}]
         self.skill.play("x")
-        self.assertEqual(len(self.sleeps), 2)
+        self.assertEqual(self.sleeps[:2], [1, 1])
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["spotify:track:1"])
 
     def test_gives_up_when_no_device_appears(self):
@@ -71,6 +82,20 @@ class SpotifySkillTests(unittest.TestCase):
             self.skill.play("x")
         self.assertIn("isn't open on any device", str(cm.exception))
         self.assertEqual(len(self.sleeps), DEVICE_WAIT_SEC)
+
+    def test_accepted_but_not_playing_retries_once_then_says_so(self):
+        self.sp.current_playback.return_value = {"is_playing": False, "item": None, "device": {"name": "PC"}}
+        with self.assertRaises(SpotifyError) as cm:
+            self.skill.play("tum hi ho")
+        self.assertIn("nothing is playing", str(cm.exception))
+        self.sp.transfer_playback.assert_called_once_with(device_id="pc", force_play=True)
+        self.assertEqual(self.sp.start_playback.call_count, 2)
+
+    def test_prefers_this_computer_when_nothing_is_active(self):
+        self.sp.devices.return_value = {"devices": [{"id": "ph", "type": "Smartphone", "is_active": False},
+                                                    {"id": "pc", "type": "Computer", "is_active": False}]}
+        self.skill.play("tum hi ho")
+        self.assertEqual(self.sp.start_playback.call_args.kwargs["device_id"], "pc")
 
     def test_api_errors_become_sentences(self):
         self.sp.pause_playback.side_effect = SpotifyException(403, -1, "Player command failed", reason="PREMIUM_REQUIRED")
@@ -91,6 +116,7 @@ class SearchTests(unittest.TestCase):
         self.sp = MagicMock()
         self.sp.devices.return_value = {"devices": [device("pc", active=True)]}
         self.skill = SpotifySkill(auth=self.auth, client=self.sp, sleep=lambda s: None)
+        report_what_was_started(self.sp)
 
     def results(self, *tracks):
         self.sp.search.return_value = {"tracks": {"items": list(tracks)}}
@@ -129,7 +155,7 @@ class SearchTests(unittest.TestCase):
     def test_play_by_choice_and_bad_choice(self):
         self.results(track("Brown Munde", "AP Dhillon", "u:1", 80), track("Brown Munde (Remix)", "DJ", "u:2", 40))
         self.skill.search("brown munde")
-        self.assertEqual(self.skill.play(choice=2), "Playing Brown Munde (Remix) by DJ.")
+        self.assertEqual(self.skill.play(choice=2), "Playing Brown Munde (Remix) by DJ on PC.")
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["u:2"])
         self.assertIn("no result number 9", self.skill.play(choice=9))
 

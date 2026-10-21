@@ -114,6 +114,19 @@ def describe(track: dict) -> str:
     return f"{track['name']} by {artists}" + (f" ({extra})" if extra else "") + (f" [{variant} version]" if variant else "")
 
 
+VERIFY_DELAY_SEC = 1.5
+
+
+def log(message: str) -> None:
+    print(f"[spotify] {message}", flush=True)
+
+
+def device_label(device: dict | None) -> str:
+    if not device:
+        return "no device"
+    return f"{device.get('name')} ({device.get('type')}, active={device.get('is_active')}, id={str(device.get('id'))[:8]})"
+
+
 class SpotifySkill:
     def __init__(self, tts=None, auth: SpotifyOAuth | None = None, client=None, sleep=time.sleep) -> None:
         self.tts = tts
@@ -141,8 +154,12 @@ class SpotifySkill:
         try:
             if not self.auth.validate_token(self.auth.cache_handler.get_cached_token()):
                 raise SpotifyError(LOGIN_HINT)
-            return action(*args)
+            result = action(*args)
+            log(f"-> {result}")
+            return result
         except Exception as exc:
+            status = getattr(exc, "http_status", None)
+            log(f"FAILED: {type(exc).__name__}{f' HTTP {status}' if status else ''}: {exc}")
             raise SpotifyError(explain(exc)) from exc
 
     def _search(self, query: str, artist: str | None) -> list[dict]:
@@ -151,6 +168,7 @@ class SpotifySkill:
         items: list[dict] = []
         for q in queries:
             items = self.sp.search(q=q, limit=SEARCH_LIMIT, type="track", market="from_token")["tracks"]["items"]
+            log(f"search {q!r}: {len(items)} results")
             if items:
                 break
         seen, unique = set(), []
@@ -161,6 +179,8 @@ class SpotifySkill:
                 unique.append((match_score(track, query, artist, rank), track))
         unique.sort(key=lambda pair: pair[0], reverse=True)
         self.candidates = [track for _, track in unique[:MAX_CANDIDATES]]
+        for i, (score, track) in enumerate(unique[:MAX_CANDIDATES], 1):
+            log(f"  {i}. {describe(track)}  score={score:.2f}")
         return self.candidates
 
     def _search_text(self, query: str, artist: str | None) -> str:
@@ -181,11 +201,32 @@ class SpotifySkill:
                 return f"Couldn't find {query} on Spotify."
             track = self.candidates[0]
         else:
-            self.sp.start_playback(device_id=self._device())
-            return "Resumed playback."
-        self.sp.start_playback(device_id=self._device(), uris=[track["uri"]])
+            device = self._device()
+            return self._start(device, None, "Resumed playback")
         artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
-        return f"Playing {track['name']}" + (f" by {artists}." if artists else ".")
+        return self._start(self._device(), track, f"Playing {track['name']}" + (f" by {artists}" if artists else ""))
+
+    def _start(self, device: dict, track: dict | None, done: str) -> str:
+        uris = [track["uri"]] if track else None
+        for attempt in (1, 2):
+            if attempt == 2:
+                log(f"transfer playback to {device_label(device)} and retry")
+                self.sp.transfer_playback(device_id=device["id"], force_play=True)
+                self._sleep(1.0)
+            log(f"start_playback on {device_label(device)} uris={uris}")
+            self.sp.start_playback(device_id=device["id"], uris=uris)
+            self._sleep(VERIFY_DELAY_SEC)
+            playback = self.sp.current_playback() or {}
+            item = playback.get("item") or {}
+            now = playback.get("device") or {}
+            log(f"check: is_playing={playback.get('is_playing')} device={device_label(now)} "
+                f"track={item.get('name')!r} uri={item.get('uri')}")
+            right_track = track is None or item.get("uri") == track["uri"]
+            if playback.get("is_playing") and right_track:
+                return f"{done} on {now.get('name') or device.get('name')}."
+        raise SpotifyError(
+            f"Spotify accepted the play command but nothing is playing on {device.get('name')}. "
+            "Open the Spotify app on that device (or play anything once by hand) and try again.")
 
     def _current_track(self) -> dict | None:
         playback = self.sp.current_playback() or {}
@@ -205,11 +246,17 @@ class SpotifySkill:
         state = "Playing" if playback.get("is_playing") else "Paused"
         return f"{state} on Spotify: {song_name(track)}."
 
-    def _device(self) -> str:
+    def _device(self) -> dict:
         for attempt in range(DEVICE_WAIT_SEC + 1):
-            devices = [d for d in self.sp.devices()["devices"] if not d.get("is_restricted")]
+            all_devices = self.sp.devices()["devices"]
+            log("devices: " + ("; ".join(device_label(d) for d in all_devices) or "none"))
+            devices = [d for d in all_devices if not d.get("is_restricted")]
             if devices:
-                return next((d for d in devices if d.get("is_active")), devices[0])["id"]
+                chosen = (next((d for d in devices if d.get("is_active")), None)
+                          or next((d for d in devices if d.get("type") == "Computer"), None)
+                          or devices[0])
+                log(f"chosen: {device_label(chosen)}")
+                return chosen
             if attempt < DEVICE_WAIT_SEC:
                 self._sleep(1)
         raise SpotifyError("Spotify isn't open on any device. Open the Spotify app and try again.")
