@@ -480,7 +480,7 @@ class PhoneServer:
         self.urgent_clip = urgent_clip or (lambda: None)
         self.greeting = greeting
         self.greeting_clip = greeting_clip or (lambda: None)
-        self.greet_after_sec = float(os.environ.get("IFA_PHONE_GREETING_AFTER_MIN", "10")) * 60
+        self.greet_after_sec = float(os.environ.get("IFA_PHONE_GREETING_AFTER_MIN", "0")) * 60
         self._last_disconnect: float | None = None
         self._speaker = speaker_check
         self._sessions: list[PhoneSession] = []
