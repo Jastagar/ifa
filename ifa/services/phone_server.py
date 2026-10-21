@@ -115,6 +115,8 @@ class PhoneSession:
         self._capturing = False
         self._cancelled = False
         self._pending_nudge: str | None = None
+        self._enroll_samples: list[np.ndarray] | None = None
+        self._enroll_capture = False
 
     def send_json(self, payload: dict) -> None:
         self._post(json.dumps(payload, ensure_ascii=False))
@@ -208,6 +210,7 @@ class PhoneSession:
     def on_message(self, message: dict) -> None:
         kind = message.get("type")
         if kind == "start":
+            self._enroll_capture = bool(message.get("enroll")) and self._enroll_samples is not None
             timeout = message.get("startTimeoutMs")
             self._start_listening(int(timeout) if timeout else None, capture_options(message))
         elif kind == "stop":
@@ -226,6 +229,14 @@ class PhoneSession:
                 self.send_json({"type": "error", "message": f"notification settings: {exc}"})
             else:
                 self.send_json({"type": "notification_settings", **applied})
+        elif kind == "enroll_begin":
+            self._in_thread(self._begin_enroll)
+        elif kind == "enroll_finish":
+            self._in_thread(self._finish_enroll)
+        elif kind == "enroll_cancel":
+            self._enroll_samples = None
+        elif kind == "enroll_forget":
+            self._in_thread(self._forget_voice)
         elif kind == "ping":
             self.send_json({"type": "pong"})
         else:
@@ -288,11 +299,22 @@ class PhoneSession:
         if self._cancelled or self.closed:
             self._no_speech("cancelled")
             return
+        if self._enroll_capture:
+            self._enroll_capture = False
+            self._take_enroll_sample(audio)
+            return
         if not has_voice(audio):
             self._no_speech(
                 f"nothing loud enough to be speech (peak {peak:.3f}, ended by {ended_by})"
             )
             return
+
+        verdict = self.server.speaker.check(audio, "phone")
+        if not verdict.accept:
+            self._no_speech(f"ignored, {verdict.describe(self.server.speaker.threshold)}")
+            return
+        if verdict.score is not None:
+            print(f"[phone] {verdict.describe(self.server.speaker.threshold)}")
 
         print("[phone] transcribing...")
         text = (self.server.transcribe(normalize(audio)) or "").strip()
@@ -305,6 +327,57 @@ class PhoneSession:
         print(f"[phone] heard: {text!r}")
         self.send_json({"type": "transcript", "text": text})
         self.server.submit(text, self)
+
+    def _in_thread(self, target) -> None:
+        threading.Thread(target=target, name="ifa-phone-enroll", daemon=True).start()
+
+    def _begin_enroll(self) -> None:
+        from ifa.voice import speaker
+
+        try:
+            speaker.ensure_model()
+        except OSError as exc:
+            self.send_json({"type": "enroll_done", "ok": False, "message": f"Couldn't download the speaker model: {exc}"})
+            return
+        self._enroll_samples = []
+        print("[phone] voice enrollment started")
+        self.send_json({"type": "enroll_ready", "phrases": speaker.ENROLL_PHRASES})
+
+    def _take_enroll_sample(self, audio: np.ndarray) -> None:
+        from ifa.voice import speaker
+
+        seconds = speaker.voiced_seconds(audio)
+        samples = self._enroll_samples
+        ok = samples is not None and seconds >= speaker.MIN_ENROLL_SEC
+        if ok:
+            samples.append(audio)
+        print(f"[phone] enrollment sample: {seconds:.1f}s of speech, {'kept' if ok else 'too short'}")
+        self.send_json({
+            "type": "enroll_sample",
+            "ok": ok,
+            "count": len(samples or []),
+            "seconds": round(seconds, 1),
+            "message": "Got it." if ok else "Didn't catch enough speech. Say the whole phrase again.",
+        })
+        self.finish_turn(followup=False)
+
+    def _finish_enroll(self) -> None:
+        samples, self._enroll_samples = self._enroll_samples or [], None
+        try:
+            result = self.server.speaker.enroll(samples, "phone")
+        except Exception as exc:
+            print(f"[phone] enrollment failed: {exc}")
+            self.send_json({"type": "enroll_done", "ok": False, "message": f"Enrollment failed: {exc}"})
+            return
+        print(f"[phone] enrollment: {result.message}")
+        self.send_json({"type": "enroll_done", "ok": result.ok, "message": result.message,
+                        "sources": self.server.speaker.enrolled_sources})
+
+    def _forget_voice(self) -> None:
+        self.server.speaker.forget()
+        print("[phone] forgot the enrolled voice")
+        self.send_json({"type": "enroll_done", "ok": True, "message": "Ifa forgot your voice. Everyone is heard again.",
+                        "sources": []})
 
     def _no_speech(self, reason: str) -> None:
         print(f"[phone] no speech: {reason}")
@@ -370,6 +443,7 @@ class PhoneServer:
         transcribe: Callable[[np.ndarray], str] | None = None,
         warm_up: Callable[[], object] | None = None,
         urgent_clip: Callable[[], np.ndarray | None] | None = None,
+        speaker_check=None,
     ) -> None:
         self.submit = submit
         self.tts = tts
@@ -382,6 +456,7 @@ class PhoneServer:
         self.notification_listen_sec = float(os.environ.get("IFA_NOTIF_LISTEN_SEC", "8"))
         self.priority = os.environ.get("IFA_PHONE_PRIORITY", "1").lower() not in {"0", "false", "no", "off"}
         self.urgent_clip = urgent_clip or (lambda: None)
+        self._speaker = speaker_check
         self._sessions: list[PhoneSession] = []
         self._sessions_lock = threading.Lock()
         self.name = socket.gethostname()
@@ -392,6 +467,13 @@ class PhoneServer:
         self._failures: dict[str, tuple[int, float]] = {}
         self._ready = threading.Event()
         self._start_error: Exception | None = None
+
+    @property
+    def speaker(self):
+        if self._speaker is None:
+            from ifa.voice import speaker
+            self._speaker = speaker.shared()
+        return self._speaker
 
     def capture(self, read_chunk, start_timeout_ms: int | None = None, **options) -> np.ndarray:
         if self._capture is None:
@@ -466,6 +548,7 @@ class PhoneServer:
             "wakeThreshold": float(os.environ.get("IFA_WAKE_THRESHOLD", "0.7")),
             "wakeConsecutive": int(os.environ.get("IFA_WAKE_CONSECUTIVE", "2")),
             "followupSec": self.followup_sec,
+            "voiceSources": self.speaker.enrolled_sources,
         }
 
     def dump_wav(self, audio: np.ndarray) -> None:

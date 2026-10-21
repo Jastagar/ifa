@@ -42,6 +42,7 @@ nvidia-cublas-cu12>=12.4,<13.0; sys_platform == "win32" or sys_platform == "linu
 nvidia-cudnn-cu12>=9.0,<10.0; sys_platform == "win32" or sys_platform == "linux"
 onnxruntime==1.23.2
 openwakeword==0.6.0
+sherpa-onnx==1.13.8
 packaging==26.1
 propcache==0.4.1
 protobuf==7.34.1

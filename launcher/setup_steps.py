@@ -71,6 +71,16 @@ def _install_ollama() -> tuple[list[str], str | None]:
     return [], "Install Ollama with your package manager or from https://ollama.com/download"
 
 
+def _enrolled(repo_root: Path, source: str) -> bool:
+    import json
+
+    try:
+        profile = json.loads((repo_root / "voiceprint.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool((profile.get("sources") or {}).get(source, {}).get("embeddings"))
+
+
 def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step]:
     py = venv_python(repo_root)
     vpy = str(py) if py else str(repo_root / "venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))
@@ -127,6 +137,11 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
         Step("voice_models", "Download voice models",
              "Caches the wake-word and Whisper models so voice mode works offline. Safe to re-run.",
              [vpy, "-m", "scripts.setup_voice_models"], blocked=no_venv),
+        Step("voice_enroll", "Teach Ifa your voice (PC mic)",
+             "Read 6 short phrases aloud so Ifa ignores other voices. Re-run to record again. "
+             "The phone app has the same thing under Settings.",
+             [vpy, "-m", "ifa.voice.enroll", "--source", "pc"], done=_enrolled(repo_root, "pc"),
+             blocked=no_venv or (None if installed_version(repo_root, "sherpa_onnx") else "Install core packages first")),
     ]
     return steps
 

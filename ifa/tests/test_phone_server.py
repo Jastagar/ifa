@@ -384,3 +384,130 @@ class PhoneServerEndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PhoneSpeakerTests(unittest.TestCase):
+    def setUp(self):
+        from ifa.voice.speaker import EnrollResult, Verdict
+
+        self.submitted, self.transcribed, self.enrolled = [], [], []
+        test = self
+
+        class StubSpeaker:
+            threshold = 0.5
+            enrolled_sources = ["pc"]
+            verdict = Verdict(True, "your voice", 0.8)
+
+            def check(self, audio, source):
+                return self.verdict
+
+            def enroll(self, samples, source):
+                test.enrolled.append((len(samples), source))
+                return EnrollResult(True, f"Learned your voice from {len(samples)} recordings on the {source}.", len(samples))
+
+            def forget(self, source=None):
+                test.enrolled.append(("forget", source))
+
+        self.speaker = StubSpeaker()
+
+        def submit(text, phone):
+            self.submitted.append(text)
+            phone.finish_turn()
+
+        def capture(read_chunk, start_timeout_ms=None):
+            chunks = []
+            try:
+                for _ in range(80):
+                    chunks.append(read_chunk())
+            except StreamClosed:
+                pass
+            return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+
+        def transcribe(audio):
+            self.transcribed.append(len(audio))
+            return "open discord"
+
+        patcher = patch("ifa.voice.speaker.ensure_model", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.port = _free_port()
+        self.server = PhoneServer(
+            submit, FakeTTS(), None, host="127.0.0.1", port=self.port,
+            discovery_port=_free_port(socket.SOCK_DGRAM), pairing_code="424242",
+            capture=capture, transcribe=transcribe, warm_up=lambda: None, speaker_check=self.speaker,
+        ).start()
+
+    def _run(self, coro):
+        return asyncio.run(asyncio.wait_for(coro, timeout=15))
+
+    async def _utterance(self, ws, seconds, enroll=False):
+        import aiohttp
+
+        await ws.send_str(json.dumps({"type": "start", "startTimeoutMs": 5000, "enroll": enroll}))
+        pcm = to_pcm16(_speech(seconds))
+        for i in range(0, len(pcm), 2560):
+            await ws.send_bytes(pcm[i:i + 2560])
+        await ws.send_str(json.dumps({"type": "stop", "reason": "test"}))
+        events = []
+        while True:
+            msg = await ws.receive()
+            if msg.type == aiohttp.WSMsgType.BINARY:
+                continue
+            events.append(json.loads(msg.data))
+            if events[-1]["type"] == "turn_end":
+                return events
+
+    def _connect(self, http):
+        return http.ws_connect(f"http://127.0.0.1:{self.port}/phone", headers={"X-IFA-Token": "424242"})
+
+    def test_a_voice_that_is_not_yours_is_dropped_before_speech_to_text(self):
+        import aiohttp
+        from ifa.voice.speaker import Verdict
+
+        self.speaker.verdict = Verdict(False, "not your voice", 0.21)
+
+        async def go():
+            async with aiohttp.ClientSession() as http:
+                ws = await self._connect(http)
+                ready = json.loads((await ws.receive()).data)
+                events = await self._utterance(ws, 2.0)
+                await ws.close()
+                return ready, events
+
+        ready, events = self._run(go())
+        self.assertEqual(ready["voiceSources"], ["pc"])
+        no_speech = next(e for e in events if e["type"] == "no_speech")
+        self.assertIn("not your voice (score 0.21, needs 0.50)", no_speech["reason"])
+        self.assertEqual(self.transcribed, [])
+        self.assertEqual(self.submitted, [])
+
+    def test_enrollment_over_the_socket(self):
+        import aiohttp
+
+        async def go():
+            async with aiohttp.ClientSession() as http:
+                ws = await self._connect(http)
+                await ws.receive()
+                await ws.send_str(json.dumps({"type": "enroll_begin"}))
+                ready = json.loads((await ws.receive()).data)
+                good = await self._utterance(ws, 2.5, enroll=True)
+                short = await self._utterance(ws, 0.5, enroll=True)
+                await ws.send_str(json.dumps({"type": "enroll_finish"}))
+                done = json.loads((await ws.receive()).data)
+                await ws.send_str(json.dumps({"type": "enroll_forget"}))
+                forgot = json.loads((await ws.receive()).data)
+                await ws.close()
+                return ready, good, short, done, forgot
+
+        ready, good, short, done, forgot = self._run(go())
+        self.assertEqual(ready["type"], "enroll_ready")
+        self.assertEqual(len(ready["phrases"]), 6)
+        sample = next(e for e in good if e["type"] == "enroll_sample")
+        self.assertTrue(sample["ok"])
+        self.assertEqual(sample["count"], 1)
+        self.assertFalse(next(e for e in short if e["type"] == "enroll_sample")["ok"])
+        self.assertEqual([e["type"] for e in good][-1], "turn_end")
+        self.assertEqual(self.transcribed, [])
+        self.assertEqual((done["type"], done["ok"]), ("enroll_done", True))
+        self.assertEqual(self.enrolled, [(1, "phone"), ("forget", None)])
+        self.assertTrue(forgot["ok"])

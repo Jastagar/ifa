@@ -85,6 +85,9 @@ def main() -> int:
     try:
         ensure_openwakeword_models()
         ensure_whisper_model()
+        from ifa.voice.speaker import ensure_model
+        ensure_model(log=_step)
+        _step("speaker model ready.")
     except Exception as exc:
         _step(f"ERROR: {exc}")
         return 1

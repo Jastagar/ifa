@@ -38,8 +38,11 @@ class VoiceInput(_InputMode):
         tts_service: TTSService,
         notifications=None,
         announce_urgent: Optional[Callable[[], None]] = None,
+        speaker_check=None,
     ) -> None:
         import sounddevice as sd
+
+        from ifa.voice import speaker
 
         from ifa.voice.capture import CAPTURE_SAMPLES, capture_utterance
         from ifa.voice.cues import play_listening_cue
@@ -56,6 +59,7 @@ class VoiceInput(_InputMode):
         self._capture_utterance = capture_utterance
         self._play_listening_cue = play_listening_cue
         self._transcribe = transcribe_array
+        self._speaker = speaker_check or speaker.shared()
         self._wake_chunk_samples = WAKE_CHUNK_SAMPLES
         self._capture_chunk_samples = CAPTURE_SAMPLES
 
@@ -262,6 +266,14 @@ class VoiceInput(_InputMode):
                     self._maybe_dump_wav(audio)
                 else:
                     print(f"[voice] captured {duration:.2f}s — transcribing...")
+
+                if len(audio):
+                    verdict = self._speaker.check(audio, "pc")
+                    if not verdict.accept:
+                        print(f"[voice] ignored: {verdict.describe(self._speaker.threshold)}")
+                        continue
+                    if verdict.score is not None:
+                        print(f"[voice] {verdict.describe(self._speaker.threshold)}")
 
                 transcribedText = self._transcribe(audio)
                 timer.mark("stt_done")

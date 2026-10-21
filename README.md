@@ -43,6 +43,17 @@ Say "that's all, thanks" (or "thanks", "never mind", "bye", "bas", "ho gaya" …
 
 Say "restart yourself" and Ifa says so, then restarts. `python -m ifa.main` runs a small supervisor (`ifa/supervisor.py`) that starts Ifa again when she exits with code 75, so it works the same from the launcher, the run scripts or a terminal, and picks up code and `.env` changes. The phone reconnects by itself.
 
+## Only your voice
+
+Teach Ifa your voice and it ignores everyone else: TV, music, family, guests. Nobody else can trigger a tool or say "yes" to a command.
+
+- **PC mic:** launcher, Setup, **Teach Ifa your voice (PC mic)**, or `python -m ifa.voice.enroll --source pc`
+- **Phone:** the app's Settings, **Teach Ifa my voice**
+
+You read 6 short phrases. Enrolling on both mics helps, because they sound different. Every utterance is checked on the PC before speech-to-text with a small speaker model (sherpa-onnx, 3D-Speaker CAM++, about 20 ms). The console logs the match score, e.g. `[voice] your voice (score 0.82, needs 0.50)` or `[voice] ignored: not your voice (score 0.23, needs 0.50)`.
+
+A reply shorter than about a second ("yes", "haan") is too short to check. It counts as you only if your voice was matched in the last 30 seconds (`IFA_SPEAKER_TRUST_SEC`). Your voiceprint is stored in `voiceprint.json` (not committed, readable only by you). Settings: `IFA_SPEAKER_CHECK`, `IFA_SPEAKER_THRESHOLD`, `IFA_SPEAKER_TRUST_SEC` (launcher: Listening). `python -m ifa.voice.enroll --forget` deletes it.
+
 ## Running commands
 
 Ifa can run terminal commands (`cmd.exe` on Windows) with the `run_command` tool, for things like "what's my IP" or "how much disk space is left". It never runs one on its own: the first call only proposes the command, Ifa asks, and it runs only if your **very next** message is a yes (yes / okay / go ahead / haan …) within two minutes. That check is in code (`ifa/skills/commands.py`), not just the prompt. Commands that delete recursively, format disks, shut down, change accounts or permissions, or pipe downloaded code into a shell are refused outright. Turn the tool off with `IFA_COMMANDS_ENABLED=0` (launcher: Tools).
