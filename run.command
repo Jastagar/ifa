@@ -37,7 +37,7 @@ if [[ ! -x "venv/bin/python" ]]; then
     python3 -m venv venv || die "Failed to create venv."
     echo "[setup] Installing dependencies from ifa/requirements.txt ..."
     venv/bin/python -m pip install --upgrade pip >/dev/null
-    venv/bin/python -m pip install -r ifa/requirements.txt -c ifa/constraints.txt || die "pip install failed."
+    PYTHONPATH=. venv/bin/python -m scripts.install_packages || die "pip install failed."
 fi
 
 # -------- 2. Ollama installed? --------

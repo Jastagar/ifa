@@ -45,13 +45,13 @@ Say "restart yourself" and Ifa says so, then restarts. `python -m ifa.main` runs
 
 ## Package versions
 
-Ifa needs **Python 3.12**. Every package is installed in one go at the exact versions in `ifa/constraints.txt` (made from a working venv where `pip check` passes, and checked to resolve on Windows too):
+Ifa runs on **Python 3.10, 3.11 or 3.12**. Every package is installed in one go, at the exact versions in `ifa/constraints.txt`. That set is tested together (`pip check` passes) and checked to resolve on Windows 3.10–3.12 and macOS 3.12:
 
 ```
-python -m pip install -r ifa/requirements.txt -c ifa/constraints.txt
+venv\Scripts\python -m scripts.install_packages      (macOS: venv/bin/python -m scripts.install_packages)
 ```
 
-The launcher's **Install packages** step does this. It also compares what's installed against the lock, so if something drifts (for example numpy 2 or a different sympy, which break torch and transformers), the step shows "Wrong versions" and re-running it puts them back. To change a version, change it in `constraints.txt` and run that step again. Don't `pip install` packages one at a time. On an NVIDIA PC, the **Switch PyTorch to the CUDA build** step swaps in the GPU build of the same torch version.
+The script prints the venv's Python, upgrades pip (old pips give up on a dependency set this size), installs against the lock and runs `pip check`. The launcher's **Install packages** step runs it, and so do the `run.*` scripts. The launcher also compares what's installed with the lock, so if a version drifts (e.g. numpy 2 or a different sympy, which break torch and transformers) the step shows "Wrong versions", and re-running it puts them back. Change versions only in `constraints.txt`, never with one-off `pip install`s. On an NVIDIA PC, **Switch PyTorch to the CUDA build** swaps in the GPU build of the same torch version.
 
 ## Without internet
 

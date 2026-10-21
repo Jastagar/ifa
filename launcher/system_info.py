@@ -34,6 +34,8 @@ def detect_system(repo_root: Path) -> dict:
     gpus = nvidia_gpus()
     apple_silicon = system == "Darwin" and platform.machine() == "arm64"
     python = venv_python(repo_root)
+    from launcher.setup_steps import venv_python_version
+    venv_version = venv_python_version(repo_root) if python else None
     return {
         "os": {"Darwin": "macOS", "Windows": "Windows", "Linux": "Linux"}.get(system, system),
         "os_version": platform.release() if system != "Darwin" else platform.mac_ver()[0],
@@ -43,6 +45,7 @@ def detect_system(repo_root: Path) -> dict:
         "recommended_device": "cuda" if gpus else "cpu",
         "launcher_python": sys.version.split()[0],
         "agent_python": str(python.relative_to(repo_root)) if python else None,
+        "agent_python_version": ".".join(map(str, venv_version)) if venv_version else None,
         "torch_in_launcher": importlib.util.find_spec("torch") is not None,
     }
 

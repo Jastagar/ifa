@@ -353,7 +353,8 @@ function renderFacts() {
   facts.replaceChildren(
     ...row("System", `${sys.os} ${sys.os_version} · ${sys.arch}`),
     ...row("GPU", gpu, deviceNotes.length ? el("div", { class: "warn" }, `cuda selected for ${deviceNotes.join(", ")} but no CUDA GPU: will fall back to CPU`) : null),
-    ...row("Agent Python", sys.agent_python ? el("span", { class: "ok" }, sys.agent_python)
+    ...row("Agent Python", sys.agent_python ? el("span", { class: ["3.10", "3.11", "3.12"].includes(sys.agent_python_version) ? "ok" : "bad" },
+        sys.agent_python + (sys.agent_python_version ? ` · Python ${sys.agent_python_version}` : ""))
       : el("span", { class: "bad" }, "no venv yet. Run the Setup steps")),
     ...row("Ollama", ol.ok ? el("span", { class: "ok" }, `reachable at ${ol.url} · ${ol.models.length} model(s)`)
       : el("span", { class: "bad" }, `not reachable at ${ol.url} (${ol.error})`)),

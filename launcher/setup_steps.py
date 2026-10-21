@@ -16,7 +16,7 @@ from launcher.system_info import check_ollama, nvidia_gpus, venv_python
 
 TORCH_VERSION = "2.6.0"
 TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu124"
-PYTHON = (3, 12)
+PYTHONS = ((3, 10), (3, 11), (3, 12))
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
@@ -155,9 +155,9 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
     wrong = wrong_versions(repo_root, constraints) if py else []
     venv_version = venv_python_version(repo_root) if py else None
     bad_python = (
-        f"Ifa needs Python {PYTHON[0]}.{PYTHON[1]} but the venv has {venv_version[0]}.{venv_version[1]}. "
-        f"Install Python {PYTHON[0]}.{PYTHON[1]}, delete the venv folder, and run Setup again"
-        if venv_version and venv_version != PYTHON else None
+        f"Ifa needs Python 3.10, 3.11 or 3.12 but the venv has {venv_version[0]}.{venv_version[1]}. "
+        "Install Python 3.12, delete the venv folder, and run Setup again"
+        if venv_version and venv_version not in PYTHONS else None
     )
     problems = []
     if missing:
@@ -174,16 +174,17 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
 
     steps = [
         Step("venv", "Create the virtual environment",
-             f"A private Python {PYTHON[0]}.{PYTHON[1]} for Ifa in ./venv, so its packages don't touch the system Python.",
+             f"A private Python {sys.version_info[0]}.{sys.version_info[1]} for Ifa in ./venv, so its packages don't touch the system Python.",
              [sys.executable, "-m", "venv", str(repo_root / "venv")], done=py is not None, rerun=False,
-             blocked=None if py or sys.version_info[:2] == PYTHON else
-             f"This launcher runs on Python {sys.version_info[0]}.{sys.version_info[1]}; Ifa needs {PYTHON[0]}.{PYTHON[1]}. "
-             f"Install Python {PYTHON[0]}.{PYTHON[1]} and open the launcher with it"),
+             blocked=None if py or sys.version_info[:2] in PYTHONS else
+             f"This launcher runs on Python {sys.version_info[0]}.{sys.version_info[1]}; Ifa needs 3.10, 3.11 or 3.12. "
+             "Install Python 3.12 and open the launcher with it"),
         Step("requirements", "Install packages",
              "Everything Ifa uses (speech-to-text, the Chatterbox voice with PyTorch, the voice check, skills) "
-             "at the exact versions in ifa/constraints.txt, which are tested together. A few GB the first time."
+             "at the exact versions in ifa/constraints.txt, which are tested together. Upgrades pip first and "
+             "checks the result. A few GB the first time."
              + (" " + " ".join(problems) if py and problems else ""),
-             [*pip, "-r", str(requirements), "-c", str(constraints)],
+             [vpy, "-m", "scripts.install_packages"],
              done=py is not None and not missing and not wrong and not bad_python,
              blocked=no_venv or bad_python),
     ]
