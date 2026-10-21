@@ -51,6 +51,9 @@ SETTINGS = (
             "The single Ollama server Ifa talks to."),
     Setting("IFA_OLLAMA_THINK", "Thinking", "model", "bool", "0",
             "Let the model reason before answering. Slower replies."),
+    Setting("IFA_OLLAMA_NUM_CTX", "Context size (tokens)", "model", "number", "8192",
+            "How much the model can read per request. Ifa's prompt is about 4,000 tokens before any conversation; "
+            "too small and Ollama drops your message (the 'No user query found' error).", minimum=4096, maximum=65536),
     Setting("IFA_OLLAMA_KEEP_ALIVE", "Keep model loaded", "model", "text", "10m",
             "How long Ollama keeps the model in memory between turns, e.g. 10m, 1h, 0."),
 

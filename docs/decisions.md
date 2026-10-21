@@ -129,3 +129,8 @@ Every significant choice since the October 2026 rework: what we decided, why, an
 - **Dates:** small models get dates wrong, so `list` ranges are computed in code and `add` relies on Google's Quick Add parser, with Ifa repeating back what Google understood.
 - **Removal:** happens only on a single match, and lands in the trash.
 
+### 31. Ask Ollama for an 8k context on every call
+- **Why:** the PC's Ollama keeps its default 4,096-token context, and Ifa's prompt (mostly tool descriptions) is about 3,800–4,050 tokens before any conversation. When a request didn't fit, Ollama dropped the oldest messages, including your question in the middle of a tool call. Qwen 3.5's chat template then failed with "No user query found in messages", and Spotify's search-then-play steps hit it most.
+- **Fix:** `IFA_OLLAMA_NUM_CTX` (8192, launcher: Language model) is sent on every request, streaming and one-off alike, so Ollama never reloads the model over a size change.
+- **Lesson:** the context limit flagged in the 2026-10-16 discussion (MLX ignores it, the PC enforces it) became a real failure once the tool list grew.
+

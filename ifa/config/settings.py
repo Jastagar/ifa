@@ -12,3 +12,4 @@ OLLAMA_THINK = os.environ.get("IFA_OLLAMA_THINK", "0").strip().lower() in {
 }
 
 OLLAMA_KEEP_ALIVE = os.environ.get("IFA_OLLAMA_KEEP_ALIVE", "10m").strip()
+OLLAMA_NUM_CTX = int(os.environ.get("IFA_OLLAMA_NUM_CTX", "8192") or 8192)

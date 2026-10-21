@@ -3,7 +3,7 @@ import json
 import base64
 import io
 from PIL import Image
-from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_THINK, MAIN_OLLAMA_URL
+from ifa.config.settings import OLLAMA_KEEP_ALIVE, OLLAMA_NUM_CTX, OLLAMA_THINK, MAIN_OLLAMA_URL
 
 DEFAULT_TIMEOUT = 60.0
 
@@ -27,6 +27,7 @@ def stream_chat(
         "stream": True,
         "think": think,
         "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {"num_ctx": OLLAMA_NUM_CTX},
     }
 
     if tools is not None:
@@ -90,6 +91,7 @@ def chat(
         "stream": False,
         "think": think,
         "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {"num_ctx": OLLAMA_NUM_CTX},
     }
 
     if tools is not None:
