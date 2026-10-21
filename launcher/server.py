@@ -32,7 +32,7 @@ class Launcher:
         self.apps_path = repo_root / "apps.json"
         self.prompts_path = repo_root / "prompts.json"
         self.db_path = str(repo_root / "ifa.db")
-        self.log = agent.log if agent else LogBuffer()
+        self.log = agent.log if agent else LogBuffer(log_dir=repo_root / "logs")
         python = venv_python(repo_root) or Path(sys.executable)
         self.agent = agent or AgentProcess([str(python), "-u", "-m", "ifa.main"], cwd=str(repo_root), log=self.log)
         self.setup = SetupRunner(repo_root, AgentProcess([], cwd=str(repo_root), log=self.log, name="setup"), self._plan)
@@ -168,6 +168,16 @@ class Launcher:
             "phone": self.phone_info(values),
         }
 
+    def share_logs(self) -> dict:
+        from launcher.log_share import build_report, upload
+
+        values = env_file.read_env(self.env_path)
+        secret_keys = [s.key for s in SETTINGS if s.secret] + [k for k in values if k not in BY_KEY]
+        report = build_report(self.log.text(), self.checks(), self.setup_steps(),
+                              [values[k] for k in secret_keys if values.get(k)])
+        url = upload(report)
+        return {"url": url, "id": url.rstrip("/").rsplit("/", 1)[-1], "lines": report.count("\n")}
+
     def phone_info(self, values: dict) -> dict:
         enabled = (values.get("IFA_PHONE_ENABLED") or "1").lower() not in {"0", "false", "no", "off"}
         if not enabled:
@@ -284,6 +294,11 @@ def make_handler(launcher: Launcher, token: str, port: int):
                     self._json(HTTPStatus.OK, launcher.save_memories(body))
                 elif path == "/api/setup/run":
                     self._json(HTTPStatus.OK, launcher.run_setup(body))
+                elif path == "/api/logs/share":
+                    try:
+                        self._json(HTTPStatus.OK, launcher.share_logs())
+                    except OSError as exc:
+                        self._json(HTTPStatus.BAD_GATEWAY, {"error": f"upload failed: {exc}"})
                 elif path == "/api/setup/stop":
                     launcher.setup.stop()
                     self._json(HTTPStatus.OK, launcher.setup.status())

@@ -183,7 +183,7 @@ nav.groups a:hover { color: var(--text); }
   </div>
   <div class="col sticky">
     <section class="card">
-      <h2>Console <button id="clear-console" class="small count">Clear</button></h2>
+      <h2>Console <span class="count" style="display:flex;gap:6px"><button id="send-logs" class="small primary">Send logs to Claude</button><button id="clear-console" class="small">Clear</button></span></h2>
       <div id="console" role="log" aria-live="polite"></div>
       <form class="say" id="say">
         <input id="say-text" type="text" placeholder="Type to Ifa (text mode)" autocomplete="off" disabled>
@@ -610,6 +610,16 @@ $("recheck").addEventListener("click", () => { loadChecks(); loadSetup(); });
 $("setup-missing").addEventListener("click", () => runSetup(state.setup.steps.filter((s) => !s.done).map((s) => s.id), true));
 $("setup-stop").addEventListener("click", async () => { try { await api("/api/setup/stop", {}); } catch (e) { banner(e.message, "error"); } });
 $("clear-console").addEventListener("click", () => $("console").replaceChildren());
+$("send-logs").addEventListener("click", async () => {
+  const button = $("send-logs");
+  button.disabled = true; button.textContent = "Uploading…";
+  try {
+    const r = await api("/api/logs/share", {});
+    banner(`Logs sent (secrets removed). Tell Claude: ${r.id}`, "warn",
+      el("button", { class: "small", onclick: () => navigator.clipboard?.writeText(r.id) }, "Copy code"));
+  } catch (e) { banner("Couldn't send logs: " + e.message, "error"); }
+  button.disabled = false; button.textContent = "Send logs to Claude";
+});
 $("add-custom").addEventListener("click", () => {
   const key = $("new-key").value.trim().toUpperCase(), value = $("new-value").value;
   if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) { banner("Variable names use UPPER_CASE letters, digits and _.", "error"); return; }

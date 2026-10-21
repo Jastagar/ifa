@@ -13,15 +13,29 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 class LogBuffer:
-    def __init__(self, max_lines: int = 3000) -> None:
+    def __init__(self, max_lines: int = 3000, log_dir=None) -> None:
         self._lock = threading.Lock()
         self._lines: deque[tuple[int, str]] = deque(maxlen=max_lines)
         self._seq = 0
+        self.log_dir = log_dir
 
     def append(self, text: str) -> None:
+        clean = ANSI.sub("", text)
         with self._lock:
             self._seq += 1
-            self._lines.append((self._seq, ANSI.sub("", text)))
+            self._lines.append((self._seq, clean))
+            if self.log_dir is not None:
+                try:
+                    self.log_dir.mkdir(parents=True, exist_ok=True)
+                    stamp = time.strftime("%H:%M:%S")
+                    with open(self.log_dir / f"launcher-{time.strftime('%Y-%m-%d')}.log", "a", encoding="utf-8") as f:
+                        f.write(f"{stamp} {clean}\n")
+                except OSError:
+                    pass
+
+    def text(self) -> str:
+        with self._lock:
+            return "\n".join(t for _, t in self._lines)
 
     def after(self, seq: int) -> tuple[list[dict], int]:
         with self._lock:
