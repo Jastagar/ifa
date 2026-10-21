@@ -9,6 +9,13 @@ import contextlib
 import io
 os.environ["TQDM_DISABLE"] = "1"
 
+import perth
+
+if perth.PerthImplicitWatermarker is None:
+    print("[tts] Chatterbox's audio watermark couldn't load (setuptools too new? run Install packages); "
+          "speaking without it")
+    perth.PerthImplicitWatermarker = perth.DummyWatermarker
+
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 from blingfire import text_to_sentences
 from rich.console import Console

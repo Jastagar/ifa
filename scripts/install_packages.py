@@ -12,6 +12,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SUPPORTED = ((3, 10), (3, 11), (3, 12))
+IMPORT_CHECK = """
+import torch, transformers, sherpa_onnx, openwakeword, faster_whisper, perth
+if perth.PerthImplicitWatermarker is None:
+    from perth.perth_net.perth_net_implicit.perth_watermarker import PerthImplicitWatermarker
+import chatterbox.tts_turbo
+print(f"[install] imports OK: torch {torch.__version__}, transformers {transformers.__version__}, "
+      f"CUDA {'yes' if torch.cuda.is_available() else 'no'}")
+"""
 
 
 def pip(*args: str) -> int:
@@ -35,6 +43,10 @@ def main() -> int:
         return code
     if pip("check") != 0:
         print("[install] installed, but pip check found the conflicts listed above.", flush=True)
+        return 1
+    print("[install] checking that the key libraries import...", flush=True)
+    if subprocess.call([sys.executable, "-c", IMPORT_CHECK], cwd=ROOT) != 0:
+        print("[install] a library is installed but won't import (see the error above).", flush=True)
         return 1
     print("[install] all packages installed at the locked versions and consistent.", flush=True)
     return 0

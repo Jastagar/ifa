@@ -101,3 +101,10 @@ Every significant choice since the October 2026 rework: what we decided, why, an
 ### 26. One package lock, Python 3.10–3.12, one install script (`9c86238`, `d361209`)
 - **Why:** separate install steps silently overwrote each other's versions (numpy 2, sympy 1.14), which broke torch and transformers. The first lock only worked on 3.12.
 - **Rule:** versions change only in `constraints.txt`.
+
+### 27. Pin setuptools to 81; check imports after installing; never crash on the watermark
+- **Why:** a package that needs another package without naming a version still gets whatever is newest. setuptools 82+ removed `pkg_resources`, perth hid the resulting import error, and Chatterbox failed with `'NoneType' object is not callable`.
+- **What changed:**
+  - setuptools is pinned to 81.0.0 and listed in `requirements.txt`, so it's always covered by the lock.
+  - `install_packages` tries importing torch, transformers, Chatterbox (and its watermarker), sherpa-onnx, openwakeword and Whisper after installing.
+  - `tts_service` falls back to perth's no-watermark class. The watermark only marks the audio as AI-generated, which a personal assistant doesn't need.

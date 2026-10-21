@@ -37,6 +37,7 @@ How Ifa gets installed, configured and started, and why it stays working without
   3. installs `-r requirements.txt -c constraints.txt`
   4. runs `pip check`
 - **The launcher compares installed versions with the lock.** If something drifts, the step shows "Wrong versions: numpy 2.2.6 (needs 1.26.4)", and running it repairs the venv. A CUDA torch (`2.6.0+cu124`) counts as 2.6.0.
+- **setuptools is pinned to 81.0.0.** torch requires `setuptools` (on Python 3.12) without saying which version, so the install pulled the newest (84), which no longer includes `pkg_resources`. Chatterbox's watermark library (`resemble-perth`) imports it and quietly sets its watermarker to `None` when that import fails, so Chatterbox crashed with `'NoneType' object is not callable`. As safeguards, the install script now tries importing the key libraries after installing, and the TTS service falls back to perth's no-watermark class if it ever happens again.
 - **Rule:** change versions only in `constraints.txt`, never with one-off `pip install`s. Regenerate the lock with the `uv pip compile` command in its header.
 - **CUDA:** **Switch PyTorch to the CUDA build** reinstalls the same torch version from the cu124 index, without dependencies.
 

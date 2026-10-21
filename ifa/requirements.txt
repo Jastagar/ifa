@@ -78,6 +78,7 @@ yarl==1.23.0
 # of everything come from constraints.txt, installed together with:
 #   pip install -r ifa/requirements.txt -c ifa/constraints.txt
 chatterbox-tts==0.1.7
+setuptools
 blingfire
 mss
 Pillow
