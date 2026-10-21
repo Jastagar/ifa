@@ -248,7 +248,7 @@ def classify_urgency(burst: Burst, chat_fn: Callable[..., dict], model: str) -> 
         if response is None:
             response = chat_fn(model=model, messages=messages, think=False)
         verdict = _parse_verdict(response["message"]["content"])
-        print(f"[notify] {burst.sender}: urgent={verdict.get('urgent')} ({verdict.get('reason')})")
+        print(f"[notify] {burst.app} · {burst.sender}: urgent={verdict.get('urgent')} ({verdict.get('reason')})")
         return verdict.get("urgent") is True
     except Exception as exc:
         print(f"[notify] ⚠ urgency check FAILED ({exc}); treating as not urgent")
@@ -296,8 +296,10 @@ class NotificationCenter:
         on_announce: Callable[[str], None] | None = None,
         poll_sec: float = 0.5,
         clock: Callable[[], float] = time.monotonic,
+        history=None,
     ) -> None:
         self.inbox = inbox
+        self.history = history
         self._classify = classify
         self.summarize = summarize
         self.on_announce = on_announce
@@ -333,7 +335,12 @@ class NotificationCenter:
 
         burst = self.inbox.add(app=app, package=package, sender=sender, text=text, priority=priority, note=note)
         if burst is not None:
-            print(f"[notify] {app} · {sender} ({priority}): {len(burst.messages)} message(s)")
+            print(f"[notify] {app} ({package}) · {sender} ({priority}): {len(burst.messages)} message(s)")
+            if self.history is not None:
+                try:
+                    self.history.record(app=app, package=package, sender=sender, text=text, priority=priority)
+                except Exception as exc:
+                    print(f"[notify] couldn't save to the notification history: {exc}")
         return burst
 
     def start(self) -> threading.Thread:

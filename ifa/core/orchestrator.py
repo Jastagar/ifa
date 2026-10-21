@@ -13,6 +13,7 @@ from ifa.core.context import AgentContext
 from ifa.core.dismiss import is_dismissal
 from ifa.core.memory import Memory
 from ifa.services.db import DB_PATH, init_db
+from ifa.services.notification_history import NotificationHistory
 from ifa.services.fillers import Fillers, generic_phrases
 from ifa.services.notifications import (
     URGENT_ANNOUNCEMENT,
@@ -218,6 +219,7 @@ def run() -> None:
         NotificationInbox(),
         classify=lambda burst: classify_urgency(burst, chat, MODEL),
         summarize=lambda bursts: summarize_bursts(bursts, chat, MODEL),
+        history=NotificationHistory(DB_PATH),
     )
     ctx = AgentContext(
         tts=tts, db_path=DB_PATH, n8n_config=n8n_config, contacts=CONTACTS,

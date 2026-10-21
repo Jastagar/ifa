@@ -401,3 +401,22 @@ class NotificationHintTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NotificationHistoryTests(unittest.TestCase):
+    def test_every_notification_is_saved_with_its_app(self):
+        import tempfile
+        from pathlib import Path
+        from ifa.services.notification_history import NotificationHistory
+
+        with tempfile.TemporaryDirectory() as tmp:
+            now = [1_000_000.0]
+            history = NotificationHistory(str(Path(tmp) / "ifa.db"), keep_days=1, clock=lambda: now[0])
+            center = NotificationCenter(NotificationInbox(), classify=lambda b: False, history=history)
+            center.receive({"context": {"packageName": "com.whatsapp", "appName": "WhatsApp", "title": "Joe", "text": "free tonight?"}})
+            center.receive({"context": {"packageName": "com.Slack", "appName": "Slack", "title": "Ana", "text": "standup"}})
+            self.assertEqual([(r["app"], r["package"], r["sender"]) for r in history.recent()],
+                             [("Slack", "com.Slack", "Ana"), ("WhatsApp", "com.whatsapp", "Joe")])
+            now[0] += 2 * 86400
+            center.receive({"context": {"packageName": "com.whatsapp", "appName": "WhatsApp", "title": "Joe", "text": "hello?"}})
+            self.assertEqual([r["text"] for r in history.recent()], ["hello?"])
