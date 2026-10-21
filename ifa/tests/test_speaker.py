@@ -65,9 +65,18 @@ class SpeakerCheckTests(unittest.TestCase):
         self.assertFalse(theirs.accept)
         self.assertEqual(theirs.reason, "not your voice")
 
+    def test_half_second_to_one_second_is_scored_against_the_short_threshold(self):
+        check = self.enrolled()
+        theirs = check.check(clip(2, seconds=0.7, seed=5), "pc")
+        mine = check.check(clip(1, seconds=0.7, seed=5), "pc")
+        self.assertTrue(mine.accept)
+        self.assertEqual(mine.needed, check.short_threshold)
+        self.assertFalse(theirs.accept)
+        self.assertIn("needs 0.40", theirs.describe())
+
     def test_short_reply_counts_only_right_after_a_match(self):
         check = self.enrolled()
-        yes = clip(2, seconds=0.6)
+        yes = clip(2, seconds=0.4)
         self.assertFalse(check.check(yes, "pc").accept)
         check.check(clip(1, seed=3), "pc")
         self.clock.now += 10
@@ -79,7 +88,7 @@ class SpeakerCheckTests(unittest.TestCase):
     def test_a_stranger_does_not_extend_trust(self):
         check = self.enrolled()
         check.check(clip(2, seed=4), "pc")
-        self.assertFalse(check.check(clip(2, seconds=0.5), "pc").accept)
+        self.assertFalse(check.check(clip(2, seconds=0.4), "pc").accept)
 
     def test_profile_is_private_and_reloads(self):
         self.enrolled()

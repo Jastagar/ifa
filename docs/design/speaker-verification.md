@@ -37,7 +37,10 @@ captured utterance ─► voiced seconds < 1.0?
 
   With a 3-clip voiceprint, the enrolled person's new clips scored **0.80–0.88**, and the closest stranger scored **0.42**. That's why the threshold is **0.5**.
   - **Lesson:** synthetic macOS voices were useless for this test. They all come from one engine, so the model scored them as nearly the same person. Use real recordings.
-- **Short replies can't be verified.** A 0.8 s clip of the right speaker scored only 0.42. So anything under about 1 s of speech ("yes", "haan") counts as you only if your voice was matched on the same mic in the last `IFA_SPEAKER_TRUST_SEC` (30 s). That's what lets you confirm a `run_command` after Ifa asks. A stranger's voice never extends the trust window.
+- **Short replies, updated 2026-10-21.** Measured on real speakers: at 0.6–1.0 s of speech you still score ≥ 0.50 and strangers ≤ 0.43, but at 0.4 s the two overlap. So:
+  - 0.5–1 s of speech is **scored** against a lower bar, `IFA_SPEAKER_SHORT_THRESHOLD` (0.40). On your PC's phone, long sentences scored 0.56–0.72, so short ones run lower than the test speakers'.
+  - Only under 0.5 s does Ifa rely on the 30 s trust window.
+- **Short replies (original rule).** A 0.8 s clip of the right speaker scored only 0.42. So anything under about 1 s of speech ("yes", "haan") counts as you only if your voice was matched on the same mic in the last `IFA_SPEAKER_TRUST_SEC` (30 s). That's what lets you confirm a `run_command` after Ifa asks. A stranger's voice never extends the trust window.
 - **Enrollment quality check:**
   - each recording needs ≥ 1.2 s of speech
   - at least 3 good recordings are needed

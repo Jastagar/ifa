@@ -21,6 +21,7 @@ MODEL_PATH = REPO_ROOT / "models" / MODEL_NAME
 PROFILE_PATH = REPO_ROOT / "voiceprint.json"
 SAMPLE_RATE = 16_000
 MIN_VERIFY_SEC = 1.0
+MIN_SCORE_SEC = 0.5
 MIN_ENROLL_SEC = 1.2
 MIN_ENROLL_SAMPLES = 3
 MIN_CONSISTENCY = 0.4
@@ -87,9 +88,11 @@ class Verdict:
     accept: bool
     reason: str
     score: float | None = None
+    needed: float | None = None
 
-    def describe(self, threshold: float) -> str:
-        return self.reason + (f" (score {self.score:.2f}, needs {threshold:.2f})" if self.score is not None else "")
+    def describe(self, threshold: float | None = None) -> str:
+        need = self.needed if self.needed is not None else threshold
+        return self.reason + (f" (score {self.score:.2f}, needs {need:.2f})" if self.score is not None else "")
 
 
 @dataclass
@@ -113,6 +116,7 @@ class SpeakerCheck:
         self.model_path = model_path
         self.threshold = threshold if threshold is not None else float(os.environ.get("IFA_SPEAKER_THRESHOLD", "0.5"))
         self.trust_sec = trust_sec if trust_sec is not None else float(os.environ.get("IFA_SPEAKER_TRUST_SEC", "30"))
+        self.short_threshold = float(os.environ.get("IFA_SPEAKER_SHORT_THRESHOLD", "0.40"))
         self._embedder = embedder
         self._clock = clock
         self._lock = threading.Lock()
@@ -181,19 +185,23 @@ class SpeakerCheck:
         if not self.active:
             return Verdict(True, "voice check off (no voice enrolled)" if not self._centroids else "voice check off")
         trusted = self._clock() - self._trusted_at.get(source, float("-inf")) <= self.trust_sec
-        if voiced_seconds(audio) < MIN_VERIFY_SEC:
+        voiced = voiced_seconds(audio)
+        if voiced < MIN_SCORE_SEC:
             if trusted:
                 return Verdict(True, "too short to check, but you spoke a moment ago")
-            return Verdict(False, "too short to tell whose voice it is")
+            return Verdict(False, f"too short to tell whose voice it is ({voiced:.1f}s of speech)")
+        needed = self.threshold if voiced >= MIN_VERIFY_SEC else self.short_threshold
         try:
             score = self.score(audio)
         except Exception as exc:
             print(f"[speaker] check failed, letting it through: {exc}")
             return Verdict(True, "voice check failed")
-        if score >= self.threshold:
+        if score >= needed:
             self._trusted_at[source] = self._clock()
-            return Verdict(True, "your voice", score)
-        return Verdict(False, "not your voice", score)
+            return Verdict(True, "your voice", score, needed)
+        if trusted and voiced < MIN_VERIFY_SEC:
+            return Verdict(True, "short reply, and you spoke a moment ago", score, needed)
+        return Verdict(False, "not your voice", score, needed)
 
     def enroll(self, samples: list[np.ndarray], source: str) -> EnrollResult:
         if source not in SOURCES:
