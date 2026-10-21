@@ -115,7 +115,7 @@ class SpeakerCheck:
         self.profile_path = profile_path
         self.model_path = model_path
         self.threshold = threshold if threshold is not None else float(os.environ.get("IFA_SPEAKER_THRESHOLD", "0.5"))
-        self.trust_sec = trust_sec if trust_sec is not None else float(os.environ.get("IFA_SPEAKER_TRUST_SEC", "30"))
+        self.trust_sec = trust_sec if trust_sec is not None else float(os.environ.get("IFA_SPEAKER_TRUST_SEC", "90"))
         self.short_threshold = float(os.environ.get("IFA_SPEAKER_SHORT_THRESHOLD", "0.40"))
         self._embedder = embedder
         self._clock = clock
@@ -181,11 +181,16 @@ class SpeakerCheck:
         with self._lock:
             return max(float(vector @ c) for c in self._centroids.values())
 
-    def check(self, audio: np.ndarray, source: str) -> Verdict:
+    def check(self, audio: np.ndarray, source: str, woke: bool = False) -> Verdict:
         if not self.active:
             return Verdict(True, "voice check off (no voice enrolled)" if not self._centroids else "voice check off")
         trusted = self._clock() - self._trusted_at.get(source, float("-inf")) <= self.trust_sec
         voiced = voiced_seconds(audio)
+        if woke and voiced < SHORT_SPEECH_SEC:
+            # A short command can't be scored reliably, but it came right after the wake word,
+            # which the TV or a stray voice almost never says.
+            self._trusted_at[source] = self._clock()
+            return Verdict(True, f"short command right after the wake word ({voiced:.1f}s of speech)")
         if voiced < MIN_SCORE_SEC:
             if trusted:
                 return Verdict(True, "too short to check, but you spoke a moment ago")

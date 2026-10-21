@@ -400,7 +400,7 @@ class PhoneSpeakerTests(unittest.TestCase):
             enrolled_sources = ["pc"]
             verdict = Verdict(True, "your voice", 0.8)
 
-            def check(self, audio, source):
+            def check(self, audio, source, woke=False):
                 return self.verdict
 
             def enroll(self, samples, source):

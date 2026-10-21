@@ -112,6 +112,8 @@ class PhoneSession:
         self._outbox: asyncio.Queue = asyncio.Queue()
         self._lock = threading.Lock()
         self._busy = False
+        self._expect_reply = False
+        self._woke = False
         self._capturing = False
         self._cancelled = False
         self._pending_nudge: str | None = None
@@ -139,6 +141,7 @@ class PhoneSession:
         if nudge is not None:
             self._run_nudge(nudge)
             return
+        self._expect_reply = followup and self.server.followup_sec > 0
         self.send_json({
             "type": "turn_end",
             "followup": followup and self.server.followup_sec > 0,
@@ -191,6 +194,7 @@ class PhoneSession:
                 print(f"[phone] couldn't play the announcement: {exc}")
             with self._lock:
                 self._busy = False
+            self._expect_reply = True
             self.send_json({
                 "type": "turn_end",
                 "followup": True,
@@ -230,6 +234,8 @@ class PhoneSession:
     def on_message(self, message: dict) -> None:
         kind = message.get("type")
         if kind == "start":
+            # Ifa didn't just ask for a reply or announce a notification, so the phone heard its wake word.
+            self._woke, self._expect_reply = not self._expect_reply, False
             self._enroll_capture = bool(message.get("enroll")) and self._enroll_samples is not None
             timeout = message.get("startTimeoutMs")
             self._start_listening(int(timeout) if timeout else None, capture_options(message))
@@ -329,7 +335,7 @@ class PhoneSession:
             )
             return
 
-        verdict = self.server.speaker.check(audio, "phone")
+        verdict = self.server.speaker.check(audio, "phone", woke=self._woke)
         if not verdict.accept:
             self._no_speech(f"ignored, {verdict.describe(self.server.speaker.threshold)}")
             return

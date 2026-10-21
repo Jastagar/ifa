@@ -162,3 +162,13 @@ class RealModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WakeWordShortCommandTests(unittest.TestCase):
+    def test_short_command_after_the_wake_word_counts_as_you(self):
+        check = SpeakerCheck(profile_path=Path(tempfile.mkdtemp()) / "vp.json", embedder=fake_embedder)
+        check.enroll([clip(1, seed=s) for s in range(4)], "pc")
+        stranger_short = clip(2, seconds=0.7, seed=5)
+        self.assertFalse(check.check(stranger_short, "pc").accept)
+        self.assertTrue(check.check(clip(2, seconds=0.4), "pc", woke=True).accept)
+        self.assertFalse(check.check(clip(2, seconds=3, seed=6), "pc", woke=True).accept)

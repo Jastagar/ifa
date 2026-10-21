@@ -40,6 +40,8 @@ captured utterance ─► voiced seconds < 1.0?
 - **Short replies, updated 2026-10-21.** Measured on real speakers: at 0.6–1.0 s of speech you still score ≥ 0.50 and strangers ≤ 0.43, but at 0.4 s the two overlap. So:
   - 0.5–1 s of speech is **scored** against a lower bar, `IFA_SPEAKER_SHORT_THRESHOLD` (0.40). On your PC's phone, long sentences scored 0.56–0.72, so short ones run lower than the test speakers'.
   - Only under 0.5 s does Ifa rely on the 30 s trust window.
+- **Short commands after the wake word, updated 2026-10-21.** Short commands ("pause", "next song", "what is it") still got ignored, because under 2 s of speech your scores (0.38–0.46) overlap with strangers'. So now anything under 2 s of speech that comes **right after the wake word** counts as you, without a score. The TV or a guest almost never says the wake word, so the risk is small. Utterances of 2 s or more, and anything heard without a wake word (follow-ups, replies to a notification), are still checked as before. On the phone, Ifa treats a `start` as wake-word-triggered unless it had just asked for a reply or announced a notification.
+- **Trust window raised from 30 s to 90 s**, so a "yes" after a long spoken reply still counts.
 - **Short replies (original rule).** A 0.8 s clip of the right speaker scored only 0.42. So anything under about 1 s of speech ("yes", "haan") counts as you only if your voice was matched on the same mic in the last `IFA_SPEAKER_TRUST_SEC` (30 s). That's what lets you confirm a `run_command` after Ifa asks. A stranger's voice never extends the trust window.
 - **Enrollment quality check:**
   - each recording needs ≥ 1.2 s of speech
@@ -51,7 +53,7 @@ captured utterance ─► voiced seconds < 1.0?
 
 ## Settings
 
-`IFA_SPEAKER_CHECK` (on), `IFA_SPEAKER_THRESHOLD` (0.5), `IFA_SPEAKER_TRUST_SEC` (30), all in the launcher under Listening. Lower the threshold if Ifa ignores you; raise it if it answers someone else. Use the logged scores to choose.
+`IFA_SPEAKER_CHECK` (on), `IFA_SPEAKER_THRESHOLD` (0.5), `IFA_SPEAKER_TRUST_SEC` (90), all in the launcher under Listening. Lower the threshold if Ifa ignores you; raise it if it answers someone else. Use the logged scores to choose.
 
 ## Limits and next
 

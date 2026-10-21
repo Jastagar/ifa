@@ -88,8 +88,9 @@ SETTINGS = (
     Setting("IFA_SPEAKER_SHORT_THRESHOLD", "Voice match threshold, short replies", "listening", "number", "0.40",
             "For 0.5-2 s of speech (\"what is it\", \"haan bolo\"). Short clips score lower, so this is below the main threshold.",
             minimum=0.1, maximum=0.95),
-    Setting("IFA_SPEAKER_TRUST_SEC", "Trust short replies for (s)", "listening", "number", "30",
-            "A short reply like \"yes\" is too short to check; it counts as you if your voice was matched this recently.",
+    Setting("IFA_SPEAKER_TRUST_SEC", "Trust short replies for (s)", "listening", "number", "90",
+            "A short reply like \"yes\" can't be checked reliably; it counts as you if your voice was matched this recently. "
+            "Short commands right after the wake word always count.",
             minimum=0, maximum=600),
     Setting("IFA_LISTENING_CUE", "Listening chime", "listening", "bool", "1",
             "Play a chime when Ifa starts listening."),

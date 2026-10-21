@@ -204,6 +204,7 @@ class VoiceInput(_InputMode):
             )
             try:
                 play_cue = True
+                woke = False
                 if announcement:
                     if not self._wait_for_tts_silence():
                         return
@@ -225,6 +226,7 @@ class VoiceInput(_InputMode):
                         continue
                     print("[voice] wake detected — capturing...")
                     capture_kwargs = {}
+                    woke = True
                 else:
                     play_cue = False
                     print(
@@ -268,7 +270,7 @@ class VoiceInput(_InputMode):
                     print(f"[voice] captured {duration:.2f}s — transcribing...")
 
                 if len(audio):
-                    verdict = self._speaker.check(audio, "pc")
+                    verdict = self._speaker.check(audio, "pc", woke=woke)
                     if not verdict.accept:
                         print(f"[voice] ignored: {verdict.describe(self._speaker.threshold)}")
                         continue
