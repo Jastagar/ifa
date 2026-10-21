@@ -9,8 +9,11 @@ import numpy as np
 from ifa.utils.devices import resolve_device
 
 
+DEFAULT_MODEL = "Oriserve/Whisper-Hindi2Hinglish-Apex"
+
 _model: Optional[object] = None
 _processor: Optional[object] = None
+_prompt_ids: Optional[object] = None
 _lock = threading.RLock()
 
 
@@ -29,10 +32,7 @@ def _load_model():
             AutoProcessor,
         )
 
-        model_name = os.environ.get(
-            "IFA_WHISPER_MODEL",
-            "Oriserve/Whisper-Hindi2Hinglish-Swift",
-        )
+        model_name = os.environ.get("IFA_WHISPER_MODEL", "").strip() or DEFAULT_MODEL
 
         device = resolve_device("IFA_WHISPER_DEVICE")
 
@@ -67,10 +67,20 @@ def _load_model():
     return _model, _processor
 
 
+def _prompt_kwargs(processor, device) -> dict:
+    global _prompt_ids
+    prompt = os.environ.get("IFA_WHISPER_PROMPT", "").strip()
+    if not prompt:
+        return {}
+    if _prompt_ids is None:
+        _prompt_ids = processor.get_prompt_ids(prompt, return_tensors="pt")
+    return {"prompt_ids": _prompt_ids.to(device)}
+
+
 def transcribe_array(
     audio: np.ndarray,
     *,
-    language: str = "hi"
+    language: Optional[str] = None,
 ) -> str:
     if audio is None or len(audio) == 0:
         return ""
@@ -105,7 +115,8 @@ def transcribe_array(
             output_ids = model.generate(
                 **inputs,
                 max_new_tokens=128,
-                language=language,
+                language=language or os.environ.get("IFA_WHISPER_LANGUAGE", "en"),
+                **_prompt_kwargs(processor, device),
                 task="transcribe",
             )
 

@@ -111,7 +111,9 @@ Voice mode tunables (env vars):
 
 - `IFA_WAKE_MODEL` — wake word (default `ifa`; accepts a path to a custom `.onnx`)
 - `IFA_WAKE_THRESHOLD` — wake-word detection threshold 0-1 (default `0.7`)
-- `IFA_WHISPER_MODEL` — faster-whisper model name (default `small.en`)
+- `IFA_WHISPER_MODEL` — speech-to-text model (default `Oriserve/Whisper-Hindi2Hinglish-Apex`; `-Prime` is larger, `-Swift` is tiny for CPU)
+- `IFA_WHISPER_LANGUAGE` — Whisper language token (default `en`, which the Hinglish models are trained with)
+- `IFA_WHISPER_PROMPT` — optional names to spell right, e.g. `Ifa, Spotify, YouTube, Sherlock`
 - `IFA_VAD_SILENCE_MS` — trailing silence that ends an utterance (default `1500`)
 - `IFA_VAD_MAX_UTTERANCE_MS` — hard cap per turn (default `30000`)
 - `IFA_LISTENING_CUE` — play a brief chime when voice capture begins (default `1`; set `0` to disable)

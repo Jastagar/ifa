@@ -57,10 +57,7 @@ def ensure_openwakeword_models() -> None:
 
 
 def ensure_whisper_model() -> None:
-    model_name = os.environ.get(
-        "IFA_WHISPER_MODEL",
-        "Oriserve/Whisper-Hindi2Hinglish-Swift",
-    )
+    model_name = os.environ.get("IFA_WHISPER_MODEL", "").strip() or "Oriserve/Whisper-Hindi2Hinglish-Apex"
 
     _step(
         f"ensuring transformers Whisper model '{model_name}' is cached..."
