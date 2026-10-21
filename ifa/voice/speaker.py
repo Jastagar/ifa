@@ -20,7 +20,7 @@ MODEL_URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-re
 MODEL_PATH = REPO_ROOT / "models" / MODEL_NAME
 PROFILE_PATH = REPO_ROOT / "voiceprint.json"
 SAMPLE_RATE = 16_000
-MIN_VERIFY_SEC = 1.0
+SHORT_SPEECH_SEC = 2.0
 MIN_SCORE_SEC = 0.5
 MIN_ENROLL_SEC = 1.2
 MIN_ENROLL_SAMPLES = 3
@@ -190,7 +190,7 @@ class SpeakerCheck:
             if trusted:
                 return Verdict(True, "too short to check, but you spoke a moment ago")
             return Verdict(False, f"too short to tell whose voice it is ({voiced:.1f}s of speech)")
-        needed = self.threshold if voiced >= MIN_VERIFY_SEC else self.short_threshold
+        needed = self.threshold if voiced >= SHORT_SPEECH_SEC else self.short_threshold
         try:
             score = self.score(audio)
         except Exception as exc:
@@ -199,7 +199,7 @@ class SpeakerCheck:
         if score >= needed:
             self._trusted_at[source] = self._clock()
             return Verdict(True, "your voice", score, needed)
-        if trusted and voiced < MIN_VERIFY_SEC:
+        if trusted and voiced < SHORT_SPEECH_SEC:
             return Verdict(True, "short reply, and you spoke a moment ago", score, needed)
         return Verdict(False, "not your voice", score, needed)
 
