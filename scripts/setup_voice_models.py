@@ -81,17 +81,35 @@ def ensure_whisper_model() -> None:
     _step("transformers Whisper ready.")
 
 
+def ensure_chatterbox_model() -> None:
+    from huggingface_hub import snapshot_download
+
+    from ifa.utils.offline import CHATTERBOX_REPO
+
+    _step(f"ensuring the Chatterbox voice model '{CHATTERBOX_REPO}' is cached (a few GB the first time)...")
+    snapshot_download(
+        repo_id=CHATTERBOX_REPO,
+        token=os.getenv("HF_TOKEN") or None,
+        allow_patterns=["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+    )
+    _step("Chatterbox ready.")
+
+
 def main() -> int:
+    from ifa.utils.offline import configure
+
+    _step(configure())
     try:
         ensure_openwakeword_models()
         ensure_whisper_model()
+        ensure_chatterbox_model()
         from ifa.voice.speaker import ensure_model
         ensure_model(log=_step)
         _step("speaker model ready.")
     except Exception as exc:
         _step(f"ERROR: {exc}")
         return 1
-    _step("all voice models cached. runtime can now use HF_HUB_OFFLINE=0.")
+    _step("all models cached. Ifa now starts without the internet.")
     return 0
 
 

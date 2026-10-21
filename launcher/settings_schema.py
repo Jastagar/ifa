@@ -130,8 +130,10 @@ SETTINGS = (
     Setting("HF_TOKEN", "Hugging Face token", "keys", "secret", "",
             "Only needed to download gated models or avoid rate limits."),
 
-    Setting("HF_HUB_OFFLINE", "Offline model loading", "advanced", "bool", "0",
-            "Never contact Hugging Face; models must already be downloaded."),
+    Setting("IFA_OFFLINE", "Offline mode", "advanced", "select", "auto",
+            "auto: once every model is downloaded, Ifa loads them from disk and never needs the internet. "
+            "on: always offline. off: always check Hugging Face for model updates.",
+            options=("auto", "on", "off")),
     Setting("IFA_LATENCY_LOG", "Latency log file", "advanced", "text", "",
             "Append each turn's timing breakdown to this JSONL file."),
     Setting("IFA_VOICE_DEBUG_WAV", "Debug audio folder", "advanced", "text", "",

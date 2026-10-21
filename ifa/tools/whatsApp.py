@@ -1,4 +1,3 @@
-from pywhatkit import whats
 from ifa.tools.registry import Tool, register
 from ifa.core.context import AgentContext
 
@@ -13,6 +12,10 @@ def _handler(args: dict, ctx: AgentContext) -> str:
     number = ctx.contacts[str.lower(name)]
     print("number")
     print(number)
+    try:
+        from pywhatkit import whats
+    except Exception as exc:
+        return f"ERROR: WhatsApp needs the internet and couldn't start: {exc}"
     return whats.sendwhatmsg_instantly(number,message)
 
 TOOL = Tool(

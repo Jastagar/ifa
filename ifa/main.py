@@ -14,6 +14,10 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _REPO_ROOT / ".env"
 _dotenv_loaded = load_dotenv(dotenv_path=_DOTENV_PATH, override=False)
 
+from ifa.utils import offline
+
+_offline_status = offline.configure()
+
 
 def _log_env_summary() -> None:
     if _dotenv_loaded:
@@ -23,6 +27,7 @@ def _log_env_summary() -> None:
 
     interesting_prefixes = ("IFA_",)
     interesting_exact = {"HF_HUB_OFFLINE", "HF_TOKEN", "PYTHONPATH"}
+    print(f"[env] {_offline_status}")
 
     rows: list[tuple[str, str]] = []
     for k, v in sorted(os.environ.items()):

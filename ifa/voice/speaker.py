@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import tempfile
@@ -126,8 +127,26 @@ class SpeakerCheck:
 
     @property
     def active(self) -> bool:
-        has_model = self._embedder is not None or self.model_path.exists()
-        return _env_flag("IFA_SPEAKER_CHECK", "1") and bool(self._centroids) and has_model
+        return _env_flag("IFA_SPEAKER_CHECK", "1") and bool(self._centroids) and self._missing() is None
+
+    def _missing(self) -> str | None:
+        if self._embedder is not None:
+            return None
+        if importlib.util.find_spec("sherpa_onnx") is None:
+            return "sherpa-onnx is not installed (launcher: Setup, Install core packages)"
+        if not self.model_path.exists():
+            return "the speaker model isn't downloaded (launcher: Setup, Download voice models)"
+        return None
+
+    def status(self) -> str:
+        if not _env_flag("IFA_SPEAKER_CHECK", "1"):
+            return "voice check off (IFA_SPEAKER_CHECK=0)"
+        if not self._centroids:
+            return "voice check off: no voice enrolled yet, so Ifa listens to everyone"
+        missing = self._missing()
+        if missing:
+            return f"voice check OFF: {missing}. Ifa listens to everyone until then"
+        return f"voice check on: only your voice (enrolled on {', '.join(self.enrolled_sources)}, threshold {self.threshold:.2f})"
 
     def reload(self) -> None:
         profile = {}

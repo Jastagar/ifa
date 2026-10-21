@@ -73,19 +73,17 @@ if ! ollama list 2>/dev/null | grep -Fqi "$OLLAMA_MODEL"; then
     ollama pull "$OLLAMA_MODEL" || die "ollama pull failed."
 fi
 
-# -------- 5. Voice-mode models pre-cached --------
-# Explicit pre-download so runtime can run with HF_HUB_OFFLINE=1.
-# openWakeWord (~1 MB) and faster-whisper small.en (~470 MB) — idempotent
-# after first run.
-PYTHONPATH=. venv/bin/python -m scripts.setup_voice_models || die "voice model setup failed."
+# -------- 5. Models downloaded --------
+# Wake word, Whisper, Chatterbox and the speaker model. Once they are cached
+# this needs no internet, and Ifa then starts fully offline.
+PYTHONPATH=. venv/bin/python -m scripts.setup_voice_models || echo "[setup] couldn't check the models (offline?); starting with what is downloaded."
 
 # -------- 6. Launch Ifa --------
 echo
 echo "[launch] Starting Ifa. Type 'exit' to quit."
 echo
-# HF_HUB_OFFLINE prevents any stray Hugging Face Hub requests at runtime;
-# all models were cached in step 5 above.
-HF_HUB_OFFLINE=1 PYTHONPATH=. venv/bin/python -m ifa.main
+# Ifa switches to offline model loading by itself when everything is cached.
+PYTHONPATH=. venv/bin/python -m ifa.main
 rc=$?
 
 echo

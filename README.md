@@ -43,6 +43,16 @@ Say "that's all, thanks" (or "thanks", "never mind", "bye", "bas", "ho gaya" …
 
 Say "restart yourself" and Ifa says so, then restarts. `python -m ifa.main` runs a small supervisor (`ifa/supervisor.py`) that starts Ifa again when she exits with code 75, so it works the same from the launcher, the run scripts or a terminal, and picks up code and `.env` changes. The phone reconnects by itself.
 
+## Without internet
+
+After setup (launcher **Run missing steps**, which installs the packages and downloads every model: wake word, Whisper, Chatterbox and the speaker model), Ifa runs with no internet at all. At startup it checks that the models are in the Hugging Face cache, and if they are, it loads them from disk without contacting Hugging Face. The console says which:
+
+```
+[env] offline: models load from disk, no internet needed (all models are downloaded)
+```
+
+If something is missing it stays online, names what will be downloaded, and you need the internet once. Ollama, the phone app (same Wi-Fi), the wake word, speech-to-text, the voice, the voice check, apps, commands, reminders and memory all work offline. Spotify, YouTube and web search, WhatsApp sending and n8n need the internet; offline they reply with an error instead of crashing. `IFA_OFFLINE` (launcher: Advanced) is `auto` by default; `on` forces offline, `off` always checks Hugging Face for model updates.
+
 ## Only your voice
 
 Teach Ifa your voice and it ignores everyone else: TV, music, family, guests. Nobody else can trigger a tool or say "yes" to a command.

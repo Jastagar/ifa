@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -49,6 +50,35 @@ def installed_version(repo_root: Path, dist: str) -> str | None:
     return None
 
 
+def _marker_applies(marker: str) -> bool:
+    try:
+        from packaging.markers import Marker
+        return Marker(marker).evaluate()
+    except ImportError:
+        return sys.platform in marker or "sys_platform" not in marker
+    except Exception:
+        return True
+
+
+def missing_requirements(repo_root: Path, requirements: Path) -> list[str]:
+    try:
+        lines = requirements.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    missing = []
+    for line in lines:
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        spec, _, marker = line.partition(";")
+        if marker.strip() and not _marker_applies(marker.strip()):
+            continue
+        name = re.split(r"[<>=!~\[\s]", spec.strip(), maxsplit=1)[0]
+        if name and installed_version(repo_root, name) is None:
+            missing.append(name)
+    return missing
+
+
 def display(argv: list[str], repo_root: Path) -> str:
     root = str(repo_root) + os.sep
     parts = [a[len(root):] if a.startswith(root) else a for a in argv]
@@ -86,6 +116,8 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
     vpy = str(py) if py else str(repo_root / "venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))
     no_venv = None if py else "Create the virtual environment first"
     pip = [vpy, "-m", "pip", "install"]
+    requirements = repo_root / "ifa" / "requirements.txt"
+    missing = missing_requirements(repo_root, requirements) if py else []
 
     url = values.get("MAIN_OLLAMA_URL") or default_url
     host, local = _ollama_host(url)
@@ -98,9 +130,10 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
              "A private Python for Ifa in ./venv, so its packages don't touch the system Python.",
              [sys.executable, "-m", "venv", str(repo_root / "venv")], done=py is not None, rerun=False),
         Step("requirements", "Install core packages",
-             "Wake word, speech-to-text, Ollama client and the rest of ifa/requirements.txt.",
-             [*pip, "-r", str(repo_root / "ifa" / "requirements.txt")],
-             done=bool(installed_version(repo_root, "faster_whisper") and installed_version(repo_root, "openwakeword")),
+             "Wake word, speech-to-text, voice check, Ollama client and the rest of ifa/requirements.txt."
+             + (f" Missing: {', '.join(missing[:6])}{' and more' if len(missing) > 6 else ''}." if py and missing else ""),
+             [*pip, "-r", str(requirements)],
+             done=py is not None and not missing,
              blocked=no_venv),
         Step("speech", "Install voice and skill packages",
              "Chatterbox TTS (pulls PyTorch, a few GB) plus the screen, Spotify and WhatsApp skill libraries.",

@@ -223,6 +223,9 @@ def run() -> None:
     )
     register_all()
 
+    from ifa.voice import speaker
+    print(f"[speaker] {speaker.shared().status()}")
+
     resume_reminders(tts, DB_PATH)
 
     def announce_urgent() -> None:

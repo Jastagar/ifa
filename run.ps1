@@ -120,18 +120,16 @@ try {
         if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
     }
 
-    # -------- 5. Voice-mode models pre-cached --------
-    # Explicit pre-download so runtime can run with HF_HUB_OFFLINE=1.
-    # openWakeWord (~1 MB) + faster-whisper small.en (~470 MB) — idempotent.
+    # -------- 5. Models downloaded --------
+    # Once everything is cached this needs no internet, and Ifa starts offline.
     $env:PYTHONPATH = '.'
     & 'venv\Scripts\python.exe' -m scripts.setup_voice_models
-    if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Host "[setup] couldn't check the models (offline?); starting with what is downloaded." -ForegroundColor Yellow }
 
     # -------- 6. Launch Ifa --------
     Write-Host ''
     Write-Host "[launch] Starting Ifa. Type 'exit' to quit." -ForegroundColor Green
     Write-Host ''
-    $env:HF_HUB_OFFLINE = '0'
     & 'venv\Scripts\python.exe' -m ifa.main
     $rc = $LASTEXITCODE
 }
