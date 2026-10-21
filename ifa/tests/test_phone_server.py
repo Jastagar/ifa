@@ -513,3 +513,36 @@ class PhoneSpeakerTests(unittest.TestCase):
         self.assertEqual((done["type"], done["ok"]), ("enroll_done", True))
         self.assertEqual(self.enrolled, [(1, "phone"), ("forget", None)])
         self.assertTrue(forgot["ok"])
+
+
+class GreetingTests(unittest.TestCase):
+    def test_greets_on_first_connect_and_after_being_away_only(self):
+        import aiohttp
+
+        server = PhoneServer(lambda t, p: p.finish_turn(), FakeTTS(), None, host="127.0.0.1", port=_free_port(),
+                             discovery_port=_free_port(socket.SOCK_DGRAM), pairing_code="424242",
+                             capture=lambda *a, **k: np.zeros(0, dtype=np.float32), transcribe=lambda a: "",
+                             warm_up=lambda: None).start()
+        server.greeting = "Hello sir, I am live, welcome home"
+        server.greet_after_sec = 600
+
+        async def connect_once():
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(f"http://127.0.0.1:{server.port}/phone", headers={"X-IFA-Token": "424242"})
+                events = []
+                try:
+                    while True:
+                        msg = await asyncio.wait_for(ws.receive(), timeout=1.5)
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            events.append(json.loads(msg.data))
+                except asyncio.TimeoutError:
+                    pass
+                await ws.close()
+                return [e for e in events if e["type"] == "reply"]
+
+        first = asyncio.run(connect_once())
+        self.assertEqual([e["text"] for e in first], ["Hello sir, I am live, welcome home"])
+        time.sleep(0.3)
+        self.assertEqual(asyncio.run(connect_once()), [])
+        server._last_disconnect -= 601
+        self.assertEqual(len(asyncio.run(connect_once())), 1)

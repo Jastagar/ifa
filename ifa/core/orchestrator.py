@@ -210,7 +210,9 @@ def run() -> None:
         handler=tts.enqueue
     )
     executor = ThreadPoolExecutor(max_workers=1)
-    fillers = Fillers(tts.synthesize, generic=generic_phrases(), extra=[URGENT_ANNOUNCEMENT])
+    from ifa.services.phone_server import greeting_text
+    greeting = greeting_text()
+    fillers = Fillers(tts.synthesize, generic=generic_phrases(), extra=[URGENT_ANNOUNCEMENT] + ([greeting] if greeting else []))
     fillers.prepare_in_background()
     notifications = NotificationCenter(
         NotificationInbox(),
@@ -279,6 +281,7 @@ def run() -> None:
     phones = start_phone_server(
         lambda text, phone: turns.put((text, phone)), tts, notifications,
         urgent_clip=lambda: fillers.clip(URGENT_ANNOUNCEMENT),
+        greeting_clip=lambda: fillers.clip(greeting) if greeting else None,
     )
     if phones is not None:
         input_mode.pause_while(phones.has_priority)

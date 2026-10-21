@@ -154,6 +154,26 @@ class PhoneSession:
             self._busy = True
         self._run_nudge(level)
 
+    def greet(self, text: str, clip) -> None:
+        if not self._begin():
+            return
+
+        def run() -> None:
+            try:
+                self.send_reply(text)
+                phone_tts = PhoneTTS(self.server.tts, self)
+                if clip is not None:
+                    phone_tts.play_clip(clip, text)
+                else:
+                    phone_tts.enqueue(text)
+                phone_tts.wait_until_done()
+            except Exception as exc:
+                print(f"[phone] couldn't play the greeting: {exc}")
+            finally:
+                self.finish_turn(followup=False)
+
+        threading.Thread(target=run, name="ifa-phone-greeting", daemon=True).start()
+
     def _run_nudge(self, level: str) -> None:
         self.send_json({"type": "nudge", "level": level})
 
@@ -444,6 +464,8 @@ class PhoneServer:
         warm_up: Callable[[], object] | None = None,
         urgent_clip: Callable[[], np.ndarray | None] | None = None,
         speaker_check=None,
+        greeting_clip: Callable[[], np.ndarray | None] | None = None,
+        greeting: str = "",
     ) -> None:
         self.submit = submit
         self.tts = tts
@@ -456,6 +478,10 @@ class PhoneServer:
         self.notification_listen_sec = float(os.environ.get("IFA_NOTIF_LISTEN_SEC", "8"))
         self.priority = os.environ.get("IFA_PHONE_PRIORITY", "1").lower() not in {"0", "false", "no", "off"}
         self.urgent_clip = urgent_clip or (lambda: None)
+        self.greeting = greeting
+        self.greeting_clip = greeting_clip or (lambda: None)
+        self.greet_after_sec = float(os.environ.get("IFA_PHONE_GREETING_AFTER_MIN", "10")) * 60
+        self._last_disconnect: float | None = None
         self._speaker = speaker_check
         self._sessions: list[PhoneSession] = []
         self._sessions_lock = threading.Lock()
@@ -651,8 +677,12 @@ class PhoneServer:
         session.send_json(self.ready_payload())
         self.warm_up_in_background()
         with self._sessions_lock:
+            first = not self._sessions
             self._sessions.append(session)
         print(f"[phone] connected: {peer}" + (" (PC mic paused while the phone is connected)" if self.priority else ""))
+        away = None if self._last_disconnect is None else time.monotonic() - self._last_disconnect
+        if self.greeting and first and (away is None or away >= self.greet_after_sec):
+            session.greet(self.greeting, self.greeting_clip())
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
@@ -668,6 +698,8 @@ class PhoneServer:
         finally:
             with self._sessions_lock:
                 self._sessions.remove(session)
+                if not self._sessions:
+                    self._last_disconnect = time.monotonic()
             session.close()
             try:
                 await asyncio.wait_for(writer, timeout=1)
@@ -698,12 +730,17 @@ class PhoneServer:
                 time.sleep(1)
 
 
-def start_phone_server(submit, tts, notifications=None, urgent_clip=None) -> PhoneServer | None:
+def greeting_text() -> str:
+    return os.environ.get("IFA_PHONE_GREETING", "Hello sir, I am live, welcome home").strip()
+
+
+def start_phone_server(submit, tts, notifications=None, urgent_clip=None, greeting_clip=None) -> PhoneServer | None:
     if not phone_enabled():
         print("[phone] phone app connection disabled (IFA_PHONE_ENABLED=0)")
         return None
     try:
-        return PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip).start()
+        return PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip,
+                           greeting_clip=greeting_clip, greeting=greeting_text()).start()
     except Exception as exc:
         print(f"[phone] could not start the phone server: {exc}")
         return None
