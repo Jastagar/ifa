@@ -520,7 +520,7 @@ class PhoneServer:
     def receive_notification(self, message: dict) -> None:
         if self.notifications is None:
             return
-        context = {k: message.get(k) for k in ("packageName", "appName", "title", "text", "receivedAt", "priority")}
+        context = {k: message.get(k) for k in ("packageName", "appName", "title", "text", "receivedAt", "priority", "appNote")}
         self.notifications.receive({"context": context})
 
     def apply_notification_settings(self, message: dict) -> dict:

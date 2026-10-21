@@ -265,7 +265,8 @@ class PhoneServerEndToEndTests(unittest.TestCase):
                 await ws.send_str(json.dumps({"type": "notification_settings", "settleSec": 500}))
                 error = json.loads((await ws.receive()).data)
                 await ws.send_str(json.dumps({"type": "notification", "packageName": "com.whatsapp",
-                                              "title": "Joe", "text": "hi", "priority": "high"}))
+                                              "title": "Joe", "text": "hi", "priority": "high",
+                                              "appNote": "Mom matters"}))
                 await ws.send_str(json.dumps({"type": "ping"}))
                 await ws.receive()
                 await ws.close()
@@ -278,6 +279,7 @@ class PhoneServerEndToEndTests(unittest.TestCase):
         self.assertEqual(error["type"], "error")
         self.assertIn("settleSec", error["message"])
         self.assertEqual(self.notifications[-1]["context"]["priority"], "high")
+        self.assertEqual(self.notifications[-1]["context"]["appNote"], "Mom matters")
 
     def test_voice_turn_round_trip(self):
         import aiohttp

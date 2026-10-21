@@ -62,6 +62,13 @@ class SettingsTests(unittest.TestCase):
         clock.advance(31)
         self.assertEqual(inbox.unread_count(), 0)
 
+    def test_app_note_is_kept_on_the_burst_and_trimmed(self):
+        center = NotificationCenter(_inbox(FakeClock()), classify=lambda b: False, summarize=lambda b: "")
+        burst = center.receive({"context": {"packageName": "com.whatsapp", "title": "Joe", "text": "hi",
+                                            "appNote": "  Mom   matters " + "x" * 400}})
+        self.assertTrue(burst.note.startswith("Mom matters x"))
+        self.assertEqual(len(burst.note), 300)
+
     def test_priority_from_the_phone_beats_the_built_in_table(self):
         center = NotificationCenter(_inbox(FakeClock()), classify=lambda b: False, summarize=lambda b: "")
         burst = center.receive({"context": {"packageName": "com.whatsapp", "title": "Joe", "text": "hi",
@@ -238,6 +245,17 @@ class ClassifyUrgencyTests(unittest.TestCase):
     def _burst(self, *texts):
         return Burst(app="WhatsApp", package="com.whatsapp", sender="Joe", priority="high",
                      messages=[Message(t, 0.0) for t in texts])
+
+    def test_the_app_note_is_given_as_a_trusted_instruction_outside_the_message(self):
+        chat = MagicMock(return_value={"message": {"content": json.dumps({"urgent": False, "reason": "banter"})}})
+        burst = self._burst("lol")
+        burst.note = "Only messages from Mom are important."
+        classify_urgency(burst, chat, "m")
+        prompt = chat.call_args.kwargs["messages"][1]["content"]
+        self.assertTrue(prompt.startswith("Sir's own note about WhatsApp notifications"))
+        self.assertLess(prompt.index("Only messages from Mom"), prompt.index("<notification>"))
+        classify_urgency(self._burst("lol"), chat, "m")
+        self.assertTrue(chat.call_args.kwargs["messages"][1]["content"].startswith("<notification>"))
 
     def test_reads_the_structured_verdict(self):
         chat = MagicMock(return_value={"message": {"content": json.dumps({"urgent": True, "reason": "asks for help"})}})

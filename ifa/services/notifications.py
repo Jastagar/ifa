@@ -24,6 +24,7 @@ APP_PRIORITY = {
     "com.Slack": "normal",
 }
 DEFAULT_APP_PRIORITY = "low"
+MAX_NOTE_CHARS = 300
 PRIORITIES = ("high", "normal", "low")
 
 URGENT_ANNOUNCEMENT = "Sir, there is an urgent message for you."
@@ -73,6 +74,7 @@ class Burst:
     classified_count: int = 0
     announced: str | None = None
     read: bool = False
+    note: str = ""
 
     @property
     def last_at(self) -> float:
@@ -97,7 +99,7 @@ class NotificationInbox:
         self._recent: list[Burst] = []
         self._discarded: deque[Burst] = deque(maxlen=max_discarded)
 
-    def add(self, app: str, package: str, sender: str, text: str, priority: str) -> Burst | None:
+    def add(self, app: str, package: str, sender: str, text: str, priority: str, note: str = "") -> Burst | None:
         now = self._clock()
         with self._lock:
             self._flush_locked(now)
@@ -108,6 +110,8 @@ class NotificationInbox:
             if burst is None:
                 burst = Burst(app=app, package=package, sender=sender, priority=priority)
                 self._recent.append(burst)
+            if note:
+                burst.note = note
             elif any(m.text == text for m in burst.messages):
                 return None
             burst.messages.append(Message(text=text, received_at=now))
@@ -214,9 +218,13 @@ def classify_urgency(burst: Burst, chat_fn: Callable[..., dict], model: str) -> 
         f"Sender: {burst.sender}\n"
         f"Messages ({len(burst.messages)}, oldest first):\n{lines}"
     )
+    note = (
+        f"Sir's own note about {burst.app} notifications, from his settings (trust it): {burst.note}\n\n"
+        if burst.note else ""
+    )
     messages = [
         {"role": "system", "content": prompts.get("urgency")},
-        {"role": "user", "content": f"<notification>\n{data}\n</notification>"},
+        {"role": "user", "content": f"{note}<notification>\n{data}\n</notification>"},
     ]
     try:
         response = None
@@ -298,8 +306,9 @@ class NotificationCenter:
         priority = str(context.get("priority") or payload.get("priority") or "").lower()
         if priority not in PRIORITIES:
             priority = APP_PRIORITY.get(package, DEFAULT_APP_PRIORITY)
+        note = " ".join(str(context.get("appNote") or "").split())[:MAX_NOTE_CHARS]
 
-        burst = self.inbox.add(app=app, package=package, sender=sender, text=text, priority=priority)
+        burst = self.inbox.add(app=app, package=package, sender=sender, text=text, priority=priority, note=note)
         if burst is not None:
             print(f"[notify] {app} · {sender} ({priority}): {len(burst.messages)} message(s)")
         return burst
