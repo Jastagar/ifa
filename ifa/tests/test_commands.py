@@ -136,9 +136,11 @@ class CustomAppTests(unittest.TestCase):
         names = tool.parameters["properties"]["app"]["enum"]
         self.assertIn("Discord", names)
         self.assertEqual([n for n in names if n.lower() == "spotify"], ["Spotify"])
-        with patch.object(system, "launch_custom") as launch:
+        with patch.object(system, "launch_custom", return_value=None) as launch:
             self.assertEqual(tool.handler({"app": "discord"}, None), "Opening Discord")
         launch.assert_called_once_with("discord://")
+        with patch.object(system, "launch_custom", return_value="'discord' is not recognized"):
+            self.assertIn("didn't open", tool.handler({"app": "discord"}, None))
 
 
 class RegistrationTests(unittest.TestCase):

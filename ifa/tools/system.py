@@ -16,7 +16,11 @@ def build_tool(apps_file=custom_apps.APPS_FILE) -> Tool:
         if app is None:
             return Application(ctx.tts).open_app(name, args.get("args", ""))
         print(f"[apps] opening {app['name']}: {app['command']}")
-        launch_custom(app["command"])
+        problem = launch_custom(app["command"])
+        if problem:
+            print(f"[apps] {app['name']} didn't open: {problem}")
+            return (f"ERROR: {app['name']} didn't open: {problem}. Tell Sir in one sentence, and suggest "
+                    "checking its command in the launcher's Apps list.")
         return f"Opening {app['name']}"
 
     return Tool(

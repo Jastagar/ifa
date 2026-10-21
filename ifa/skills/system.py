@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import os
+import tempfile
 
 URI = re.compile(r"^[a-z][a-z0-9+.-]+:\S*$", re.IGNORECASE)
 
@@ -80,19 +81,34 @@ class Application:
         else:
             subprocess.Popen(cmd if isinstance(cmd, list) else [cmd])
 
-def launch_custom(command: str) -> None:
-    target = os.path.expanduser(os.path.expandvars(command.strip().strip('"')))
+def launch_custom(command: str, wait_sec: float = 2.0) -> str | None:
+    """Start a saved app. Returns None if it started, or what went wrong."""
+    command = command.strip()
+    target = os.path.expanduser(os.path.expandvars(command.strip('"')))
     if os.path.exists(target) or URI.match(target):
         if sys.platform == "win32":
             os.startfile(target)
         else:
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", target],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return
+        return None
     if sys.platform == "win32":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        subprocess.Popen(command, shell=True, creationflags=flags,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # `start` also finds apps that aren't on PATH but are registered with Windows
+        # (chrome, discord, excel...), the same way the Run box does.
+        if not command.lower().startswith("start "):
+            command = f'start "" {command}'
+        kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW}
     else:
-        subprocess.Popen(command, shell=True, start_new_session=True,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        kwargs = {"start_new_session": True}
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(command, shell=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=errors, **kwargs)
+        try:
+            code = process.wait(timeout=wait_sec)
+        except subprocess.TimeoutExpired:
+            return None
+        if code == 0:
+            return None
+        errors.seek(0)
+        message = " ".join(errors.read().decode(errors="replace").split())[:300]
+    return message or f"the command exited with code {code}"
