@@ -242,7 +242,7 @@ class SetupTests(unittest.TestCase):
         steps = {s.id: s for s in plan(self.root, {"MAIN_OLLAMA_URL": "http://127.0.0.1:9"}, "")}
         self.assertFalse(steps["venv"].done)
         self.assertIsNone(steps["venv"].blocked)
-        for sid in ("requirements", "speech", "voice_models"):
+        for sid in ("requirements", "voice_models"):
             self.assertTrue(steps[sid].blocked)
         self.assertIn("Set the model", steps["ollama_pull"].blocked)
         self.assertNotIn("torch_cuda", steps) if sys.platform == "darwin" else None

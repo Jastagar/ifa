@@ -94,6 +94,35 @@ class RequirementsCheckTests(unittest.TestCase):
             self.assertEqual(missing_requirements(root, req), ["sherpa-onnx", "scipy"])
 
 
+class LockFileTests(unittest.TestCase):
+    def test_finds_drifted_versions_but_accepts_the_cuda_build_of_torch(self):
+        from launcher.setup_steps import wrong_versions
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            site = root / "venv" / "Lib" / "site-packages"
+            site.mkdir(parents=True)
+            for dist in ("numpy-2.2.6", "sympy-1.14.0", "torch-2.6.0+cu124", "transformers-5.2.0", "PyYAML-6.0.3"):
+                (site / f"{dist}.dist-info").mkdir()
+            lock = root / "constraints.txt"
+            lock.write_text("# lock\nnumpy==1.26.4\nsympy==1.13.1\ntorch==2.6.0\ntransformers==5.2.0\npyyaml==6.0.3\nscipy==1.16.0\n")
+            self.assertEqual(wrong_versions(root, lock), [("numpy", "2.2.6", "1.26.4"), ("sympy", "1.14.0", "1.13.1")])
+
+    def test_every_exact_pin_in_requirements_agrees_with_the_lock(self):
+        import re
+
+        root = Path(__file__).resolve().parents[1]
+        lock = {}
+        for line in (root / "constraints.txt").read_text().splitlines():
+            name, sep, version = line.partition("==")
+            if sep:
+                lock[re.sub(r"[-_.]+", "-", name).lower()] = version
+        for line in (root / "requirements.txt").read_text().splitlines():
+            match = re.match(r"([A-Za-z0-9_.\-]+)\s*==\s*([^\s,;]+)", line.split("#")[0])
+            if match and re.sub(r"[-_.]+", "-", match.group(1)).lower() in lock:
+                self.assertEqual(lock[re.sub(r"[-_.]+", "-", match.group(1)).lower()], match.group(2), match.group(1))
+
+
 class SpeakerStatusTests(unittest.TestCase):
     def test_missing_sherpa_turns_the_check_off_with_a_reason(self):
         from ifa.voice.speaker import SpeakerCheck

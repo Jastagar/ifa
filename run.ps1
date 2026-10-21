@@ -76,7 +76,7 @@ try {
 
         Write-Step 'Installing dependencies from ifa\requirements.txt ...'
         & 'venv\Scripts\python.exe' -m pip install --upgrade pip | Out-Null
-        & 'venv\Scripts\python.exe' -m pip install -r 'ifa\requirements.txt'
+        & 'venv\Scripts\python.exe' -m pip install -r 'ifa\requirements.txt' -c 'ifa\constraints.txt'
         if ($LASTEXITCODE -ne 0) { Pause-Exit 1 }
     }
 

@@ -43,6 +43,16 @@ Say "that's all, thanks" (or "thanks", "never mind", "bye", "bas", "ho gaya" …
 
 Say "restart yourself" and Ifa says so, then restarts. `python -m ifa.main` runs a small supervisor (`ifa/supervisor.py`) that starts Ifa again when she exits with code 75, so it works the same from the launcher, the run scripts or a terminal, and picks up code and `.env` changes. The phone reconnects by itself.
 
+## Package versions
+
+Ifa needs **Python 3.12**. Every package is installed in one go at the exact versions in `ifa/constraints.txt` (made from a working venv where `pip check` passes, and checked to resolve on Windows too):
+
+```
+python -m pip install -r ifa/requirements.txt -c ifa/constraints.txt
+```
+
+The launcher's **Install packages** step does this. It also compares what's installed against the lock, so if something drifts (for example numpy 2 or a different sympy, which break torch and transformers), the step shows "Wrong versions" and re-running it puts them back. To change a version, change it in `constraints.txt` and run that step again. Don't `pip install` packages one at a time. On an NVIDIA PC, the **Switch PyTorch to the CUDA build** step swaps in the GPU build of the same torch version.
+
 ## Without internet
 
 After setup (launcher **Run missing steps**, which installs the packages and downloads every model: wake word, Whisper, Chatterbox and the speaker model), Ifa runs with no internet at all. At startup it checks that the models are in the Hugging Face cache, and if they are, it loads them from disk without contacting Hugging Face. The console says which:

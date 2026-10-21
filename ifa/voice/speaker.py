@@ -133,7 +133,7 @@ class SpeakerCheck:
         if self._embedder is not None:
             return None
         if importlib.util.find_spec("sherpa_onnx") is None:
-            return "sherpa-onnx is not installed (launcher: Setup, Install core packages)"
+            return "sherpa-onnx is not installed (launcher: Setup, Install packages)"
         if not self.model_path.exists():
             return "the speaker model isn't downloaded (launcher: Setup, Download voice models)"
         return None

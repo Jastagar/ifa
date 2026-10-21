@@ -16,7 +16,7 @@ from launcher.system_info import check_ollama, nvidia_gpus, venv_python
 
 TORCH_VERSION = "2.6.0"
 TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu124"
-SPEECH_PACKAGES = ["chatterbox-tts==0.1.7", "blingfire", "mss", "Pillow", "spotipy", "pywhatkit"]
+PYTHON = (3, 12)
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
@@ -38,16 +38,48 @@ def _site_packages(repo_root: Path) -> list[Path]:
     return [venv / "Lib" / "site-packages", *sorted((venv / "lib").glob("python*/site-packages"))]
 
 
-def installed_version(repo_root: Path, dist: str) -> str | None:
-    prefix = dist.lower().replace("-", "_") + "-"
+def _norm(name: str) -> str:
+    return re.sub(r"[-_.]+", "_", name).lower()
+
+
+def installed_versions(repo_root: Path) -> dict[str, str]:
+    found = {}
     for site in _site_packages(repo_root):
         if not site.is_dir():
             continue
         for entry in site.iterdir():
-            name = entry.name.lower()
-            if name.startswith(prefix) and name.endswith(".dist-info"):
-                return entry.name[len(prefix):-len(".dist-info")]
-    return None
+            if entry.name.endswith(".dist-info"):
+                name, _, version = entry.name[: -len(".dist-info")].rpartition("-")
+                found.setdefault(_norm(name), version)
+    return found
+
+
+def installed_version(repo_root: Path, dist: str) -> str | None:
+    return installed_versions(repo_root).get(_norm(dist))
+
+
+def venv_python_version(repo_root: Path) -> tuple[int, int] | None:
+    try:
+        text = (repo_root / "venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"^version(?:_info)?\s*=\s*(\d+)\.(\d+)", text, re.MULTILINE)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def wrong_versions(repo_root: Path, constraints: Path) -> list[tuple[str, str, str]]:
+    try:
+        lines = constraints.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    installed = installed_versions(repo_root)
+    wrong = []
+    for line in lines:
+        name, sep, wanted = line.split("#", 1)[0].strip().partition("==")
+        have = installed.get(_norm(name)) if sep else None
+        if have is not None and have.split("+", 1)[0] != wanted.strip():
+            wrong.append((name, have, wanted.strip()))
+    return wrong
 
 
 def _marker_applies(marker: str) -> bool:
@@ -65,6 +97,7 @@ def missing_requirements(repo_root: Path, requirements: Path) -> list[str]:
         lines = requirements.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
+    installed = installed_versions(repo_root)
     missing = []
     for line in lines:
         line = line.split("#", 1)[0].strip()
@@ -74,7 +107,7 @@ def missing_requirements(repo_root: Path, requirements: Path) -> list[str]:
         if marker.strip() and not _marker_applies(marker.strip()):
             continue
         name = re.split(r"[<>=!~\[\s]", spec.strip(), maxsplit=1)[0]
-        if name and installed_version(repo_root, name) is None:
+        if name and _norm(name) not in installed:
             missing.append(name)
     return missing
 
@@ -117,7 +150,21 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
     no_venv = None if py else "Create the virtual environment first"
     pip = [vpy, "-m", "pip", "install"]
     requirements = repo_root / "ifa" / "requirements.txt"
+    constraints = repo_root / "ifa" / "constraints.txt"
     missing = missing_requirements(repo_root, requirements) if py else []
+    wrong = wrong_versions(repo_root, constraints) if py else []
+    venv_version = venv_python_version(repo_root) if py else None
+    bad_python = (
+        f"Ifa needs Python {PYTHON[0]}.{PYTHON[1]} but the venv has {venv_version[0]}.{venv_version[1]}. "
+        f"Install Python {PYTHON[0]}.{PYTHON[1]}, delete the venv folder, and run Setup again"
+        if venv_version and venv_version != PYTHON else None
+    )
+    problems = []
+    if missing:
+        problems.append(f"Missing: {', '.join(missing[:6])}{' and more' if len(missing) > 6 else ''}.")
+    if wrong:
+        shown = ", ".join(f"{n} {have} (needs {want})" for n, have, want in wrong[:4])
+        problems.append(f"Wrong versions: {shown}{' and more' if len(wrong) > 4 else ''}. Running this fixes them.")
 
     url = values.get("MAIN_OLLAMA_URL") or default_url
     host, local = _ollama_host(url)
@@ -127,18 +174,18 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
 
     steps = [
         Step("venv", "Create the virtual environment",
-             "A private Python for Ifa in ./venv, so its packages don't touch the system Python.",
-             [sys.executable, "-m", "venv", str(repo_root / "venv")], done=py is not None, rerun=False),
-        Step("requirements", "Install core packages",
-             "Wake word, speech-to-text, voice check, Ollama client and the rest of ifa/requirements.txt."
-             + (f" Missing: {', '.join(missing[:6])}{' and more' if len(missing) > 6 else ''}." if py and missing else ""),
-             [*pip, "-r", str(requirements)],
-             done=py is not None and not missing,
-             blocked=no_venv),
-        Step("speech", "Install voice and skill packages",
-             "Chatterbox TTS (pulls PyTorch, a few GB) plus the screen, Spotify and WhatsApp skill libraries.",
-             [*pip, *SPEECH_PACKAGES], done=installed_version(repo_root, "chatterbox_tts") is not None,
-             blocked=no_venv),
+             f"A private Python {PYTHON[0]}.{PYTHON[1]} for Ifa in ./venv, so its packages don't touch the system Python.",
+             [sys.executable, "-m", "venv", str(repo_root / "venv")], done=py is not None, rerun=False,
+             blocked=None if py or sys.version_info[:2] == PYTHON else
+             f"This launcher runs on Python {sys.version_info[0]}.{sys.version_info[1]}; Ifa needs {PYTHON[0]}.{PYTHON[1]}. "
+             f"Install Python {PYTHON[0]}.{PYTHON[1]} and open the launcher with it"),
+        Step("requirements", "Install packages",
+             "Everything Ifa uses (speech-to-text, the Chatterbox voice with PyTorch, the voice check, skills) "
+             "at the exact versions in ifa/constraints.txt, which are tested together. A few GB the first time."
+             + (" " + " ".join(problems) if py and problems else ""),
+             [*pip, "-r", str(requirements), "-c", str(constraints)],
+             done=py is not None and not missing and not wrong and not bad_python,
+             blocked=no_venv or bad_python),
     ]
     if sys.platform != "darwin" and nvidia_gpus():
         torch = installed_version(repo_root, "torch") or ""
@@ -147,7 +194,7 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
             "PyPI ships CPU-only PyTorch on Windows. This swaps in the GPU build of the same version Chatterbox needs.",
             [*pip, "--force-reinstall", "--no-deps", f"torch=={TORCH_VERSION}", f"torchaudio=={TORCH_VERSION}",
              "--index-url", TORCH_CUDA_INDEX],
-            done="+cu" in torch, blocked=no_venv or (None if torch else "Install voice and skill packages first")))
+            done="+cu" in torch, blocked=no_venv or (None if torch else "Install packages first")))
     install_argv, install_blocked = _install_ollama()
     steps += [
         Step("ollama_install", "Install Ollama", "The local server that runs the language model.",
@@ -166,7 +213,7 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
              blocked=no_venv or ("Add your Spotify keys under Keys first"
                                  if not (values.get("SPOTIFY_CLIENT_ID") and values.get("SPOTIFY_CLIENT_SECRET"))
                                  else None if installed_version(repo_root, "spotipy")
-                                 else "Install voice and skill packages first")),
+                                 else "Install packages first")),
         Step("voice_models", "Download voice models",
              "Caches the wake-word and Whisper models so voice mode works offline. Safe to re-run.",
              [vpy, "-m", "scripts.setup_voice_models"], blocked=no_venv),
@@ -174,7 +221,7 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
              "Read 6 short phrases aloud so Ifa ignores other voices. Re-run to record again. "
              "The phone app has the same thing under Settings.",
              [vpy, "-m", "ifa.voice.enroll", "--source", "pc"], done=_enrolled(repo_root, "pc"),
-             blocked=no_venv or (None if installed_version(repo_root, "sherpa_onnx") else "Install core packages first")),
+             blocked=no_venv or (None if installed_version(repo_root, "sherpa_onnx") else "Install packages first")),
     ]
     return steps
 

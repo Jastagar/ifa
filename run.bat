@@ -49,7 +49,7 @@ if not exist "venv\Scripts\python.exe" (
     python -m venv venv || exit /b 1
     echo [setup] Installing dependencies from ifa\requirements.txt ...
     "venv\Scripts\python.exe" -m pip install --upgrade pip >nul
-    "venv\Scripts\python.exe" -m pip install -r "ifa\requirements.txt" || exit /b 1
+    "venv\Scripts\python.exe" -m pip install -r "ifa\requirements.txt" -c "ifa\constraints.txt" || exit /b 1
 )
 
 REM -------- 2. Ollama installed? --------
