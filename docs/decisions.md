@@ -108,3 +108,8 @@ Every significant choice since the October 2026 rework: what we decided, why, an
   - setuptools is pinned to 81.0.0 and listed in `requirements.txt`, so it's always covered by the lock.
   - `install_packages` tries importing torch, transformers, Chatterbox (and its watermarker), sherpa-onnx, openwakeword and Whisper after installing.
   - `tts_service` falls back to perth's no-watermark class. The watermark only marks the audio as AI-generated, which a personal assistant doesn't need.
+
+### 28. Read notifications only when asked, enforced in code
+- **Why:** the unread note on every message, plus a turn-ending tool, plus memory of earlier calls, made Ifa read notifications instead of answering. A stronger prompt wouldn't be reliable on a 9B model.
+- **What changed:** the note and the tool apply only right after an announcement (90 s) or when your message mentions notifications or messages. Otherwise the tool refuses with an error, and the turn continues to answer you.
+

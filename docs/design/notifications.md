@@ -39,6 +39,19 @@ read_notifications (terminal tool) ─► summarizer: one second-person sentence
 - **"What is it?" uses a terminal tool with a focused summarizer.** The main model kept writing summaries from its own point of view ("I'm free tonight") or offering to reply. A dedicated summarizer prompt writes "Joe wants to know if you're free tonight.", and that sentence is spoken as-is, with a template fallback.
   - **Measured:** the urgency check got 6/6 right, and the tool was called 7/9 times, which is model reliability.
 
+## Only read when asked (2026-10-21)
+
+**Problem:** Ifa read notifications out when you'd asked something else.
+- The "N unread notifications" note was attached to *every* message while anything was unread. With several apps forwarding, that was almost always.
+- `read_notifications` ends the turn by design, so your real question got no answer.
+- Memory now keeps tool calls, so one "what is it?" taught the model to keep calling it.
+
+**Fix, in code:** both the note and the tool apply only when
+- Ifa announced a notification in the last 90 seconds (the "what is it?" reply), or
+- your message mentions notifications or messages ("any messages?", "who texted me", "kiska message").
+
+Otherwise the tool returns an `ERROR:` result. Errors are never spoken as-is, so the model goes on to answer what you asked, and the notifications stay unread. Reading clears the "announced" mark, so the next turn doesn't count as a reply to it.
+
 ## Settings live on the phone (2026-10-21)
 
 **You wanted to control notifications from the app, not the web UI.**

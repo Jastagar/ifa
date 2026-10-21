@@ -28,6 +28,16 @@ MAX_NOTE_CHARS = 300
 PRIORITIES = ("high", "normal", "low")
 
 URGENT_ANNOUNCEMENT = "Sir, there is an urgent message for you."
+ANNOUNCED_WINDOW_SEC = 90
+ASKS_ABOUT_NOTIFICATIONS = re.compile(
+    r"\b(notifications?|messages?|msgs?|texts?|texted|whats ?app|telegram|sms|e-?mails?|mails?|"
+    r"who (called|texted|messaged|wrote|pinged)|kis(ka|ne|ki)|missed|unread|pinged)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_about_notifications(text: str) -> bool:
+    return bool(ASKS_ABOUT_NOTIFICATIONS.search(text or ""))
 
 SETTING_LIMITS = {
     "settleSec": (1, 60),
@@ -285,6 +295,7 @@ class NotificationCenter:
         summarize: Callable[[list[Burst]], str] = template_summary,
         on_announce: Callable[[str], None] | None = None,
         poll_sec: float = 0.5,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.inbox = inbox
         self._classify = classify
@@ -294,6 +305,18 @@ class NotificationCenter:
         self._lock = threading.Lock()
         self._pending: str | None = None
         self.announcement_ready = threading.Event()
+        self._clock = clock
+        self._announced_at: float | None = None
+
+    def recently_announced(self) -> bool:
+        at = self._announced_at
+        return at is not None and self._clock() - at <= ANNOUNCED_WINDOW_SEC
+
+    def relevant_to(self, user_text: str) -> bool:
+        return self.recently_announced() or asks_about_notifications(user_text)
+
+    def mark_read(self) -> None:
+        self._announced_at = None
 
     def receive(self, payload: dict) -> Burst | None:
         context = payload.get("context") or {}
@@ -336,6 +359,7 @@ class NotificationCenter:
             return level
 
     def _queue_announcement(self, level: str) -> None:
+        self._announced_at = self._clock()
         if self.on_announce is not None:
             self.on_announce(level)
             return

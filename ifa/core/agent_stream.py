@@ -92,8 +92,9 @@ def _flush_speech_batch(parts: list[str], on_sentence) -> None:
 
 
 def _notification_hint(ctx: AgentContext) -> str:
-    unread = ctx.notifications.inbox.unread_count() if ctx.notifications else 0
-    if not unread:
+    center = ctx.notifications
+    unread = center.inbox.unread_count() if center else 0
+    if not unread or not center.relevant_to(ctx.user_text):
         return ""
     return (
         f"[Ifa system note, not from the user: {unread} unread phone notification(s) "

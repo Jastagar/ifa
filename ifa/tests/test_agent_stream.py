@@ -353,3 +353,22 @@ class MemoryTests(AgentLoopTestCase):
         for i in range(3):
             memory.add_turn(f"q{i}", [], f"a{i}")
         self.assertEqual([m["content"] for m in memory.recent()], ["q1", "a1", "q2", "a2"])
+
+
+class UnaskedNotificationTests(AgentLoopTestCase):
+    def test_reading_notifications_unasked_is_refused_and_the_real_question_answered(self):
+        from ifa.services.notifications import NotificationCenter, NotificationInbox
+        from ifa.tools import notifications as notifications_tool
+
+        inbox = NotificationInbox(max_recent=7, ttl_sec=90, settle_sec=4, max_discarded=50)
+        inbox.add(app="WhatsApp", package="com.whatsapp", sender="Joe", text="free tonight?", priority="normal")
+        self.ctx.notifications = NotificationCenter(inbox, classify=lambda b: False)
+        registry.register(notifications_tool.TOOL)
+        spoken = []
+        llm = ScriptedLLM(_calls(("read_notifications", {"scope": "new"})), _text("It's sunny and 31 degrees, Sir."))
+        reply = self.run_turn(llm, "what's the weather like?", spoken)
+        self.assertEqual(reply, "It's sunny and 31 degrees, Sir.")
+        self.assertEqual(spoken, ["It's sunny and 31 degrees, Sir."])
+        self.assertIn("didn't ask about notifications", _tool_messages(llm.requests[1])[0]["content"])
+        self.assertEqual(inbox.unread_count(), 1)
+        self.assertNotIn("unread phone notification", llm.requests[0]["messages"][-1]["content"])
