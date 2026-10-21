@@ -10,6 +10,10 @@ DEFAULT_TIMEOUT = 60.0
 def build_tool_result_message(tool_name: str, content: str) -> dict:
     return {"role": "tool", "tool_name": tool_name, "content": content}
 
+class OllamaError(RuntimeError):
+    pass
+
+
 def stream_chat(
     model: str,
     messages: list[dict],
@@ -34,13 +38,22 @@ def stream_chat(
         json=payload,
         timeout=timeout,
     ) as response:
-        response.raise_for_status()
+        status = getattr(response, "status_code", 200)
+        if isinstance(status, int) and status >= 400:
+            body = response.read().decode("utf-8", "replace")
+            try:
+                detail = json.loads(body).get("error") or body
+            except ValueError:
+                detail = body
+            raise OllamaError(f"Ollama answered HTTP {response.status_code}: {detail[:500]}")
 
         for line in response.iter_lines():
             if not line:
                 continue
-
-            yield json.loads(line)
+            chunk = json.loads(line)
+            if chunk.get("error"):
+                raise OllamaError(f"Ollama error: {str(chunk['error'])[:500]}")
+            yield chunk
 
 def chat(
     model: str,

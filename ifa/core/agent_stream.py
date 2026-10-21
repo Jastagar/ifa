@@ -9,6 +9,7 @@ from ifa.core.memory import Memory, tool_step
 from ifa.core.personality import tool_framing
 from ifa.services import memory_store, prompts
 from ifa.services.ollama_client import (
+    OllamaError,
     build_tool_result_message,
     stream_chat,
 )
@@ -30,6 +31,10 @@ def _build_system_prompt(nonce: str, db_path: str | None = None) -> str:
         parts.append(memory)
     return "\n\n".join(parts)
 
+TOOL_CALL_RETRY = (
+    "[Ifa system note, not from the user: your last tool call couldn't be read. Call the tool again "
+    "with simple, valid JSON arguments: plain strings and numbers, no extra text.]"
+)
 TOOL_RESULT_MARKER = "TOOL_RESULT_"
 FABRICATION_CORRECTION = (
     "[Ifa system note, not from the user: you wrote a tool result yourself. Tool "
@@ -236,8 +241,16 @@ def agent_turn_stream(
                 messages, allow_tools=allow_tools, on_sentence=on_sentence,
                 guard_claims=allow_tools and tool_hops == 0,
             )
-        except (KeyError, httpx.HTTPError):
-            return "I hit a problem talking to the language model."
+        except (KeyError, httpx.HTTPError, OllamaError) as exc:
+            print(f"[agent] language model error: {exc}", flush=True)
+            if retries_remaining and "tool" in str(exc).lower():
+                retries_remaining -= 1
+                messages.append({"role": "user", "content": TOOL_CALL_RETRY})
+                continue
+            fallback = "I hit a problem talking to the language model."
+            if on_sentence:
+                on_sentence(fallback)
+            return fallback
 
         claimed = assistant_msg.pop("claimed")
         if assistant_msg.pop("fabricated"):
