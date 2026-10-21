@@ -325,5 +325,75 @@ def login() -> int:
     return 0
 
 
+def doctor() -> int:
+    import json
+    import socket
+
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
+    auth = make_auth()
+    token = auth.validate_token(auth.cache_handler.get_cached_token())
+    if not token:
+        print(LOGIN_HINT)
+        return 1
+    print(f"[doctor] token scopes: {token.get('scope')}")
+    session = requests.Session()
+    session.headers["Authorization"] = f"Bearer {token['access_token']}"
+    api = "https://api.spotify.com/v1"
+
+    def call(method: str, path: str, **kwargs):
+        response = session.request(method, api + path, timeout=15, **kwargs)
+        body = response.text.strip()
+        try:
+            body = json.dumps(response.json(), ensure_ascii=False)
+        except ValueError:
+            pass
+        print(f"[doctor] {method} {path} {kwargs.get('params') or ''} {kwargs.get('json') or ''}-> HTTP {response.status_code} {body[:900]}")
+        return response
+
+    me = call("GET", "/me").json()
+    print(f"[doctor] account: {me.get('display_name')} ({me.get('id')}), country {me.get('country')}, product {me.get('product')}")
+    devices = call("GET", "/me/player/devices").json().get("devices", [])
+    host = socket.gethostname()
+    print(f"[doctor] this PC's name: {host}")
+    target = next((d for d in devices if d.get("name", "").lower().startswith(host.split(".")[0].lower())), None) \
+        or next((d for d in devices if d.get("is_active")), None) or (devices[0] if devices else None)
+    if not target:
+        print("[doctor] no devices at all: open the Spotify app on the PC and sign in with this account")
+        return 1
+    print(f"[doctor] target device: {target.get('name')} ({target.get('type')}) id={target.get('id')}")
+    call("GET", "/me/player")
+    found = call("GET", "/search", params={"q": "Humdard Arijit Singh", "type": "track", "limit": 1, "market": "from_token"}).json()
+    items = (found.get("tracks") or {}).get("items") or []
+    uri = items[0]["uri"] if items else "spotify:track:1OEmd2iXU8pWG7CrKNpGUg"
+    print(f"[doctor] test track: {items[0]['name'] if items else uri} {uri}")
+
+    def watch(label: str) -> bool:
+        for _ in range(10):
+            time.sleep(0.5)
+            r = session.get(api + "/me/player", timeout=15)
+            data = r.json() if r.status_code == 200 and r.text.strip() else {}
+            if data.get("is_playing"):
+                print(f"[doctor] {label}: PLAYING {(data.get('item') or {}).get('name')} on {(data.get('device') or {}).get('name')}")
+                return True
+        print(f"[doctor] {label}: still not playing after 5 s; last /me/player -> HTTP {r.status_code} {r.text.strip()[:400]}")
+        return False
+
+    call("PUT", "/me/player/play", params={"device_id": target["id"]}, json={"uris": [uri]})
+    if watch("play with device_id"):
+        return 0
+    call("PUT", "/me/player", json={"device_ids": [target["id"]], "play": True})
+    time.sleep(1.5)
+    call("PUT", "/me/player/play", json={"uris": [uri]})
+    if watch("transfer, then play"):
+        return 0
+    call("PUT", "/me/player/play", params={"device_id": target["id"]})
+    if watch("plain resume on that device"):
+        return 0
+    print("[doctor] Spotify accepted the commands but nothing played. Send these logs to Claude.")
+    return 1
+
+
 if __name__ == "__main__":
-    sys.exit(login())
+    sys.exit(doctor() if "--doctor" in sys.argv else login())

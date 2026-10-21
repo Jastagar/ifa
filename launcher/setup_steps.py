@@ -215,6 +215,11 @@ def plan(repo_root: Path, values: dict[str, str], default_url: str) -> list[Step
                                  if not (values.get("SPOTIFY_CLIENT_ID") and values.get("SPOTIFY_CLIENT_SECRET"))
                                  else None if installed_version(repo_root, "spotipy")
                                  else "Install packages first")),
+        Step("spotify_doctor", "Diagnose Spotify",
+             "Plays a test song on this PC and prints Spotify's raw answers (account, devices, play commands). "
+             "Run it when Spotify says it's playing but nothing plays, then Send logs.",
+             [vpy, "-m", "ifa.skills.spotify", "--doctor"], done=None,
+             blocked=no_venv or (None if (repo_root / ".spotify_token").exists() else "Log in to Spotify first")),
         Step("google_login", "Log in to Google Calendar",
              "Opens Google in your browser once and saves the login to .google_token.json, so Ifa can read "
              "and add calendar events.",
