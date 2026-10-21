@@ -136,10 +136,18 @@ def log_api_call(response, *args, **kwargs):
     body = request.body
     if isinstance(body, bytes):
         body = body.decode("utf-8", "replace")
-    reply = (response.text or "").strip().replace("\n", " ")
+    reply = (response.text or "").strip()
+    try:
+        import json
+        data = response.json()
+        if isinstance(data, dict) and isinstance(data.get("tracks"), dict):
+            data = {"tracks": {"total": data["tracks"].get("total"), "items": f"{len(data['tracks'].get('items') or [])} items"}}
+        reply = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    except ValueError:
+        reply = reply.replace("\n", " ")
     took = int(response.elapsed.total_seconds() * 1000) if response.elapsed else 0
     log(f"API {request.method} {request.url}" + (f" body={body[:300]}" if body else "")
-        + f" -> HTTP {response.status_code} ({took} ms)" + (f" {reply[:600]}" if reply else ""))
+        + f" -> HTTP {response.status_code} ({took} ms)" + (f" {reply[:2500]}" if reply else ""))
     return response
 
 
