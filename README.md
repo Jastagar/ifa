@@ -1,5 +1,8 @@
 # I F(elt) A(lone)
 
+
+**How it's built and why:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (map), [docs/design/](docs/design/) (one page per area), [docs/decisions.md](docs/decisions.md) (every decision and its reason), [docs/roadmap.md](docs/roadmap.md) (what's next).
+
 ## What is it:
 
 A bot that you can talk to as ask to do some stuff, there are probably 100s out there and yes this like one of them, but hey, you never know for sure

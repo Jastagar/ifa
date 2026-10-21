@@ -1,220 +1,114 @@
-# Ifa — architectural walkthrough
+# Ifa: architecture
 
-A learning-oriented tour of the codebase. Read this once, then dive into the files in the order suggested.
+Ifa is a personal voice assistant that runs on your own PC: a local LLM in Ollama, a custom wake word, Hinglish speech-to-text, a cloned Chatterbox voice, and tools for apps, music, reminders, memory, notifications and terminal commands. An Android app acts as a remote mic, speaker and notification source.
+
+This page is the map. Each area has its own document with the decisions and the reasons behind them:
+
+| Area | Document |
+|---|---|
+| Agent loop, tools, guards, memory, persona | [design/agent-loop.md](design/agent-loop.md) |
+| Wake word → STT → TTS, streaming, fillers, latency | [design/speech-pipeline.md](design/speech-pipeline.md) |
+| Phone notifications: inbox, urgency, summaries, Apps tab | [design/notifications.md](design/notifications.md) |
+| Android app and its WebSocket protocol | [design/phone-app.md](design/phone-app.md) |
+| Only your voice (speaker verification) | [design/speaker-verification.md](design/speaker-verification.md) |
+| Spotify, apps, websites, run_command, WhatsApp | [design/tools.md](design/tools.md) |
+| Launcher, setup, package versions, offline mode | [design/launcher-and-setup.md](design/launcher-and-setup.md) |
+| **Every decision, with why and what was rejected** | [decisions.md](decisions.md) |
+| **What's next, parked, unverified or limited** | [roadmap.md](roadmap.md) |
 
 ---
 
-## What Ifa is
-
-A personal AI assistant that runs entirely on your own machine. You talk to it (text or voice); it understands the request, picks tools (get the time, set a reminder, remember a fact, trigger an n8n workflow, or just chat), executes them, and replies. The LLM lives in [Ollama](https://ollama.com/) (`qwen2.5:7b-instruct`); the voice stack uses [openWakeWord](https://github.com/dscripka/openWakeWord) for wake-word, [Silero VAD](https://github.com/snakers4/silero-vad) for end-of-turn, and [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for transcription; the TTS uses the OS native engines (`say`/SAPI/`espeak`).
-
-It is intentionally **single-user, single-machine, offline-first**. Models are pre-downloaded once; runtime sets `HF_HUB_OFFLINE=1` so it never phones home.
-
----
-
-## How a turn flows
-
-### Text mode (default)
+## The system
 
 ```
-                 ┌────────────────────────────────────────────────┐
-                 │                                                │
- user types ─────►  orchestrator.run()  ◄──── tts.speak(reply) ──┘
-                       │
-                       ▼
-                 input_mode.get()                ifa/voice/input.py (_TextMode)
-                       │  returns "what time is it"
-                       ▼
-                 agent_turn(text, ctx, memory)   ifa/core/agent.py
-                       │   1. build messages with system prompt
-                       │      + recent memory + new user text
-                       │   2. POST to Ollama /api/chat with tools=[...]
-                       │   3. LLM emits {tool_calls: [{name: "get_time", ...}]}
-                       │   4. registry.dispatch("get_time", args, ctx)
-                       │   5. wrap result with delimit_as_data(nonce, ...)
-                       │   6. send result back to LLM
-                       │   7. LLM emits final assistant text "It's 3:45 PM"
-                       ▼
-                 reply (string)
-                       │
-                       ▼
-                 tts.speak(reply)                ifa/services/tts_service.py
-                       │  (subprocess: say/SAPI/espeak)
-                       ▼
-                 input_mode.arm_followup()       no-op in text mode
+                    ┌──────────── PC ─────────────────────────────────────────────────────────┐
+ Android app        │                                                                         │
+ ─────────────      │  launcher (localhost page)  ── starts/stops ──►  python -m ifa.main     │
+ wake word "Ifa" ───┼── WebSocket :8789 ──► phone_server ──┐            (supervisor restarts  │
+ mic / speaker      │   (UDP :8788 discovery)              │             on exit code 75)     │
+ notifications ─────┼──────────────────────────────────────┤                                  │
+ Apps tab, settings │                                      ▼                                  │
+                    │  PC mic ─► wake word ─► VAD ─► voice check ─► Whisper ─┐                │
+                    │                                                        ▼                │
+                    │            NotificationCenter ◄──── agent turn (ReAct, ≤ 3 tool rounds) │
+                    │                                       │      ▲                          │
+                    │                                       ▼      │                          │
+                    │                       tools (apps, Spotify, run_command, memory, …)     │
+                    │                                       │                                 │
+                    │       Ollama (one model) ◄────────────┘                                 │
+                    │                                                                         │
+                    │  reply sentences ─► Chatterbox ─► PC speakers, or streamed to the phone │
+                    └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Voice mode (`IFA_MODE=voice`)
+**Principles that run through all of it**
+- **Local first.** Ifa needs no internet once set up ([offline mode](design/launcher-and-setup.md#offline-mode-2026-10-21)). Only the online skills (Spotify, web, WhatsApp, n8n) need it.
+- **One model, one memory, one queue.** PC and phone turns share memory and never overlap.
+- **Steer with the prompt, enforce with code.** A 9B model fails in predictable ways. Fabricated tool results, claimed actions, command confirmation and the voice check are all enforced in code.
+- **Third-party text is data.** Notifications, web pages and command output reach the model only inside per-turn nonce markers or `<notification>` blocks. Your own settings (app notes) are passed as trusted instructions, outside those blocks.
+- **Measure, then change.** Time to first speech, tool-choice probes and model comparisons justified each change. The numbers are in the design documents.
 
-```
-       MAIN THREAD                              VOICE THREAD (daemon)
+## One voice turn
 
-       orchestrator.run()
-            │                                   ifa/voice/input.py — VoiceInput
-            ▼                                   ┌──────────────────────────────┐
-       input_mode.get()  ◄────── queue.put ─────│ wait_for_wake (1280-sample)  │
-            │   (blocks)                         │  ifa/voice/wake_word.py     │
-            ▼                                   │ capture_utterance (512)      │
-       agent_turn(text, ...)                    │  ifa/voice/capture.py        │
-            │                                   │ transcribe_array(audio)      │
-            ▼                                   │  ifa/voice/stt.py            │
-       tts.speak(reply)                         │                              │
-            │   (is_speaking=True               └──────────────────────────────┘
-            │    during playback +                    ▲
-            │    cooldown)                            │ shared sounddevice.InputStream
-            ▼                                         │ at 16 kHz mono float32
-       input_mode.arm_followup()
-            │   (sets _turn_complete event)
-            ▼
-       (loop)
-```
+1. **Wake word:** openWakeWord `ifa.onnx`, on the PC mic or on the phone.
+2. **Capture:** Silero VAD ends the utterance on silence. The phone sends its own pause and threshold settings.
+3. **Voice check:** under about 1 s of speech is trusted only right after a matched utterance; otherwise a CAM++ embedding is scored against your voiceprint. Not you means ignored, never transcribed.
+4. **Whisper:** Oriserve Hinglish Apex, `en` token.
+5. **Goodbyes** ("that's all") end the turn with no model call.
+6. **Agent turn:** system prompt and persona, last 4 whole turns, and an unread-notification hint. Ollama streams, tools run, results come back marked as data.
+7. **Speech:**
+   - a filler clip if nothing is spoken within 650 ms (or right away, when a tool is called)
+   - sentences go to Chatterbox as they arrive
+   - the audio plays on the PC, or streams to the phone
+8. **Follow-up:** listen briefly without the wake word.
 
-The voice thread feeds the same `agent_turn` the text-mode loop does. The main thread can block on `tts.speak()` for the full TTS duration without stalling the mic — which would otherwise mean missing the user's follow-up.
+## Where things live
 
----
-
-## Where everything lives (call-graph order)
-
-### Entry point
-
-| File | Role |
+| Path | What it is |
 |---|---|
-| **[ifa/main.py](../ifa/main.py)** | Loads `.env`, prints config summary, calls `orchestrator.run()`. This is the file Python invokes. |
+| [ifa/main.py](../ifa/main.py), [ifa/supervisor.py](../ifa/supervisor.py) | Entry point: load `.env`, pick offline/online, run under the restart supervisor |
+| [ifa/core/orchestrator.py](../ifa/core/orchestrator.py) | Startup and the main loop; `run_turn` (fillers, ordering) |
+| [ifa/core/agent_stream.py](../ifa/core/agent_stream.py) | The ReAct loop, streaming, guards |
+| [ifa/core/memory.py](../ifa/core/memory.py), [ifa/services/memory_store.py](../ifa/services/memory_store.py) | Short-term turns; long-term memories by topic (SQLite) |
+| [ifa/core/dismiss.py](../ifa/core/dismiss.py), [ifa/core/personality.py](../ifa/core/personality.py), [ifa/services/prompts.py](../ifa/services/prompts.py) | Goodbye detection; tool-data framing; editable prompts (persona, urgency, summary) |
+| [ifa/tools/](../ifa/tools/) | One file per tool; `registry.py` validates, dispatches, marks results as data |
+| [ifa/skills/](../ifa/skills/) | The code tools call: Spotify, apps, browser, commands, reminders, vision, games |
+| [ifa/voice/](../ifa/voice/) | Wake word, capture, STT, cues, speaker verification, enrollment |
+| [ifa/services/](../ifa/services/) | TTS, fillers, notifications, phone server, pairing, Ollama client, custom apps, DB |
+| [ifa/utils/](../ifa/utils/) | Latency timer, device choice, offline mode, speech queue |
+| [launcher/](../launcher/) | The local setup and settings page |
+| [scripts/](../scripts/) | `install_packages`, `setup_voice_models`, `notify-test`, `smoke_voice` |
+| [ifa/requirements.txt](../ifa/requirements.txt), [ifa/constraints.txt](../ifa/constraints.txt) | What to install; the exact tested versions |
+| `~/Projects/ifa.app` | The Android app (separate repo) |
 
-### Orchestration
-
-| File | Role |
-|---|---|
-| **[ifa/core/orchestrator.py](../ifa/core/orchestrator.py)** | The main loop. Does startup (health check Ollama, load n8n config, init DB, build TTS + AgentContext, register tools, resume pending reminders), then loops on `input_mode.get()` → `agent_turn` → `tts.speak` → `arm_followup`. |
-| **[ifa/core/agent_stream.py](../ifa/core/agent_stream.py)** | `agent_turn_stream(user_text, ctx, memory, on_sentence)` — one conversational turn as a ReAct loop. Builds messages with system prompt + memory + new input, calls Ollama with the tool schema, dispatches every tool call the LLM emits (one result per call, errors included), and feeds the results back so the model can take another step. `MAX_TOOL_HOPS=3` caps tool rounds per turn; on the last round tools are withheld so the model must answer. Sentences are handed to TTS as they complete. |
-| **[ifa/core/context.py](../ifa/core/context.py)** | `AgentContext` — a frozen-ish dataclass carrying `tts`, `db_path`, and `n8n_config`. Threaded through every tool handler so handlers can side-effect without module-level singletons. |
-| **[ifa/core/memory.py](../ifa/core/memory.py)** | `Memory` — bounded list of `{role, content}` dicts. Short-term chat history, NOT long-term knowledge. Long-term facts live in SQLite via the `remember_fact` tool. |
-
-### Tools (LLM dispatch surface)
-
-| File | Role |
-|---|---|
-| **[ifa/tools/registry.py](../ifa/tools/registry.py)** | The `Tool` dataclass + `register/dispatch/as_ollama_schema` helpers. `dispatch` JSON-Schema-validates args before invoking the handler; `delimit_as_data` wraps results with a per-turn nonce so a crafted tool result can't inject prompt instructions. |
-| **[ifa/tools/__init__.py](../ifa/tools/__init__.py)** | `register_all()` — explicit registration of every Stage 1 tool. Called once at startup. |
-| **[ifa/tools/time.py](../ifa/tools/time.py)** | `get_time` — read this if you want a minimal example of declaring a tool. |
-| **[ifa/tools/reminder.py](../ifa/tools/reminder.py)** | `set_reminder` — adapter that calls `ReminderSkill.schedule(task, seconds)`. |
-| **[ifa/tools/memory.py](../ifa/tools/memory.py)** | `remember_fact` — INSERTs into the `facts` table, with retrieval via `load_facts()` (called by `agent.py` to inject facts into the system prompt). |
-| **[ifa/tools/n8n.py](../ifa/tools/n8n.py)** | `call_n8n_workflow` — POSTs to a configured webhook. Per-workflow JSON Schemas in `ifa/config/n8n_workflows.yaml`. |
-
-### Services (stateful infrastructure)
-
-| File | Role |
-|---|---|
-| **[ifa/services/tts_service.py](../ifa/services/tts_service.py)** | Cross-platform TTS via subprocess (`say -o`+`afplay` / PowerShell SAPI / `espeak`). Exposes `is_speaking` so the wake-word listener can mute its mic during Ifa's reply (and for 500 ms after — the cooldown window). |
-| **[ifa/services/db.py](../ifa/services/db.py)** | SQLite schema + `init_db`. WAL mode. Two tables: `reminders` and `facts`. |
-| **[ifa/services/ollama_client.py](../ifa/services/ollama_client.py)** | HTTP wrapper around Ollama's `/api/chat` and `/api/tags`. `build_tool_result_message` isolates the `tool_name` field quirk so callers don't drift. |
-
-### Voice pipeline (only loaded in `IFA_MODE=voice`)
-
-| File | Role |
-|---|---|
-| **[ifa/voice/input.py](../ifa/voice/input.py)** | `init_input(tts)` returns the input mode (text or voice). `VoiceInput` opens the mic stream once and runs wake→capture→transcribe on a daemon thread feeding a `queue.Queue`. Read the `_run_loop` method's docstring to understand the mute / drain / arm_followup interactions. |
-| **[ifa/voice/wake_word.py](../ifa/voice/wake_word.py)** | `WakeWordListener` — openWakeWord wrapper. Default model is the bundled `ifa/models/ifa.onnx` (custom-trained); `IFA_WAKE_MODEL` env var overrides with built-in name or path. Includes the missing-file fallback (logs WARNING, falls back to `hey_mycroft`). |
-| **[ifa/voice/capture.py](../ifa/voice/capture.py)** | `capture_utterance(read_chunk)` — 512-sample chunks fed to Silero VAD. Cuts on 1.5 s trailing silence or 30 s max. Has a `start_timeout_ms` for the follow-up window. |
-| **[ifa/voice/stt.py](../ifa/voice/stt.py)** | `transcribe_array(audio)` — faster-whisper on a numpy array. Lazy model load. `IFA_WHISPER_DEVICE=auto` tries CUDA first, falls back to CPU. |
-
-### Skills (mostly historical)
-
-| File | Role |
-|---|---|
-| **[ifa/skills/base.py](../ifa/skills/base.py)** | Pre-Stage-1 base class. Read its docstring for the "don't subclass this in new code" guidance. |
-| **[ifa/skills/reminder.py](../ifa/skills/reminder.py)** | `ReminderSkill.schedule(task, seconds)` — the only live method. Called by the `set_reminder` tool adapter. |
-
-### Launchers (operator UX)
-
-| File | Role |
-|---|---|
-| **[run.bat](../run.bat) / [run.ps1](../run.ps1) / [run.command](../run.command)** | Self-healing launchers: create venv, install deps, start Ollama, pull qwen if needed, pre-download voice models, then `python -m ifa.main` with `HF_HUB_OFFLINE=1`. |
-| **[run-voice.bat](../run-voice.bat) / [run-voice-ps.bat](../run-voice-ps.bat) / [run-voice.command](../run-voice.command)** | Thin wrappers: set `IFA_MODE=voice`, then delegate to the text-mode launcher. |
-| **[scripts/setup_voice_models.py](../scripts/setup_voice_models.py)** | Pre-downloads openWakeWord + faster-whisper models. Idempotent. Called by every launcher before the runtime launch. |
-| **[scripts/smoke_voice.py](../scripts/smoke_voice.py)** | Manual smoke modes: `mic`, `record`, `capture`, `transcribe`, `diagnose`. Use these when voice mode misbehaves to triangulate which stage is at fault. |
-
-### Configuration
-
-| File | Role |
-|---|---|
-| **[.env.example](../.env.example)** | Documented template for `.env`. Every `IFA_*` knob with rationale. Copy to `.env` once, edit to taste. |
-| **[ifa/requirements.txt](../ifa/requirements.txt)** | Pinned Python deps. Note that `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` are only pulled on Windows/Linux for GPU Whisper; `scikit-learn`/`scipy` are range-pinned because exact versions break older Pythons. |
-
----
-
-## Three concepts that thread through everything
-
-### 1. The agent loop is the brain — tools are the limbs
-
-Stage 0 of Ifa had an "intent classifier" that tried to map text to skills with regex/keywords. It was fragile and brittle. Stage 1 replaced that with **Ollama tool dispatch**: the LLM gets a list of tools (`get_time`, `set_reminder`, etc.) with JSON Schemas, and decides itself which to call. The agent loop is plumbing — it only handles message-passing, dispatch, and result delimiting. It contains zero domain logic.
-
-If you want Ifa to do something new, **add a tool**. Look at `ifa/tools/time.py` (the simplest) for the pattern: declare a `Tool`, `register(TOOL)`, add to `register_all()`. The LLM will pick it up automatically once it's in the schema.
-
-### 2. The `AgentContext` is dependency injection without a framework
-
-The naive way to give tools access to `tts`, `db`, etc. is module-level singletons. That's what Stage 0 did, and it made testing hellish (every test had to reset globals). Stage 1 instead builds an `AgentContext` once in the orchestrator and passes it through `agent_turn` → `dispatch(tool_name, args, ctx)` → `handler(args, ctx)`. Tests construct their own contexts with mocks; production gets the real services.
-
-### 3. Voice mode is a thread on top of text mode
-
-The voice pipeline doesn't replace the text-mode loop — it produces input for it. `VoiceInput.get()` blocks on a `queue.Queue` that the daemon thread fills with transcribed text. From the orchestrator's view, voice and text are interchangeable: both implement `_InputMode` (just `get()` and `arm_followup()`). The complicated part is the voice thread itself; the orchestrator stays simple.
-
----
+Runtime files, not committed: `.env`, `apps.json`, `prompts.json`, `voiceprint.json`, `.phone_token`, `.spotify_token`, `ifa.db`, `models/`.
 
 ## Tests
-
-Run the full suite from repo root:
 
 ```
 PYTHONPATH=. venv/bin/python -m unittest discover ifa/tests
 ```
 
-Notable test files:
+- The suite mocks the LLM, audio devices and heavy models (a scripted fake LLM drives the agent-loop tests).
+- `test_tool_call_bench.py` is a manual bench against a live Ollama, with sandboxed tool handlers.
+- `test_speaker.py` includes a real-model test when `IFA_SR_DATA` points at sherpa-onnx's sample recordings.
+- On a Mac, `blingfire` (Intel-only) has to be stubbed.
 
-| File | What it covers |
+## When something's wrong
+
+| Symptom | Look at |
 |---|---|
-| **[test_tool_call_bench.py](../ifa/tests/test_tool_call_bench.py)** | NOT run in CI. Manual acceptance bench against live Ollama: 20 utterances with expected tool selections, prints per-tool accuracy. Gates the deletion of any further legacy paths. Run with `PYTHONPATH=. venv/bin/python -m ifa.tests.test_tool_call_bench`. |
-| **[test_agent_loop.py](../ifa/tests/test_agent_loop.py)** | The agent_turn flow end-to-end with mocked Ollama. |
-| **[test_tool_registry.py](../ifa/tests/test_tool_registry.py)** | Registry mechanics + JSON Schema validation. |
-| **[test_orchestrator_stage1.py](../ifa/tests/test_orchestrator_stage1.py)** | Regression guards confirming the legacy detect_intent / extract_fact / extract_reminder paths stay deleted. |
-| **[test_wake_word.py](../ifa/tests/test_wake_word.py)** | Wake-word listener with openWakeWord mocked + a real-onnxruntime integrity check on the bundled `.onnx`. |
-| **[test_capture.py](../ifa/tests/test_capture.py)** | VAD-gated capture with Silero mocked. |
-| **[test_voice_input.py](../ifa/tests/test_voice_input.py)** | The full voice-thread daemon loop with sounddevice + openWakeWord + Whisper all mocked. |
+| Install fails or torch/transformers errors | Launcher → Install packages (shows wrong versions); [launcher-and-setup.md](design/launcher-and-setup.md#package-versions-2026-10-21) |
+| Ifa needs internet at startup | The `[env] offline/online` line; Setup → Download voice models |
+| Ifa ignores you | `[voice] ignored: … (score …)` lines; `IFA_SPEAKER_THRESHOLD`; enroll again |
+| Notifications never announce | The app's Apps tab switch; `[notify] … urgent=… (reason)` in the console |
+| A tool isn't called / wrong tool | The tool's description in `ifa/tools/*.py`; [agent-loop.md](design/agent-loop.md#tool-selection-descriptions-matter) |
+| "Playing X" but nothing plays | `[agent] reply claimed an action without a tool call`; Spotify login / device |
+| Slow first word | The per-turn latency report; `IFA_LATENCY_LOG` |
 
----
+## History
 
-## Where to look when something is wrong
-
-| Symptom | Suspect file(s) |
-|---|---|
-| Ollama health check fails on startup | `ifa/services/ollama_client.py:check_health`, `ifa/core/agent.py:MODEL` |
-| Tool isn't being picked by the LLM | `ifa/core/agent.py` (system prompt), `ifa/tools/registry.py:as_ollama_schema`, the tool's own `description` and `parameters` |
-| Reminder doesn't fire after restart | `ifa/core/orchestrator.py:resume_reminders`, `ifa/services/db.py` (schema), `ifa/skills/reminder.py:_reminder` |
-| Voice mode hangs / no detection | `scripts/smoke_voice.py mic`, `scripts/smoke_voice.py record`, then `ifa/voice/wake_word.py`, `ifa/voice/input.py:_run_loop` |
-| Self-feedback loop (Ifa transcribes herself) | `ifa/services/tts_service.py:is_speaking`, `ifa/voice/input.py:_wait_for_tts_silence`, `ifa/voice/input.py:_drain_stream` |
-| Whisper returns empty / wrong text | `ifa/voice/stt.py:_get_model` (device + compute_type), `IFA_WHISPER_DEVICE` env, dump WAV via `IFA_VOICE_DEBUG_WAV` |
-
----
-
-## Stage history (for context)
-
-The codebase has been built incrementally. Each stage shipped to `main` with an acceptance gate.
-
-| Stage | What landed | Plan doc |
+| When | What | Where |
 |---|---|---|
-| **Stage 1** | LLM tool dispatch (qwen2.5:7b-instruct), tool registry, n8n integration, fact memory | `docs/plans/2026-04-23-002-feat-stage1-llm-tool-dispatch-plan.md` |
-| **Stage 2** | Voice input (wake word + VAD + Whisper), mute-during-TTS, follow-up window | `docs/plans/2026-04-23-003-feat-stage2-voice-input-plan.md` |
-| **Stage 3** | Custom-trained `ifa.onnx` wake-word model | `docs/plans/2026-04-27-001-feat-custom-hey-ifa-wakeword-plan.md` |
-
-Read those plans if you want the original problem framing, decisions, and tradeoff rationale that produced this code.
-
----
-
-## Practical next steps for a new contributor
-
-1. Read `ifa/main.py`. Then `ifa/core/orchestrator.py`'s `run()` function.
-2. Read `ifa/core/agent.py`'s `agent_turn`. Trace what happens for the input `"what time is it"`.
-3. Read one tool: `ifa/tools/time.py`. Then read `ifa/tools/registry.py:dispatch`.
-4. If you're touching voice: read `ifa/voice/input.py`'s `_run_loop` method docstring carefully — it explains the mute/drain/event-coordination dance.
-5. Run `PYTHONPATH=. venv/bin/python -m unittest discover ifa/tests` and read the names that pass. The test names are quasi-documentation.
-6. Skim a recent commit (`git log --oneline -20`) — commits are usually scoped to one logical change with a thorough message; reading them in order is often easier than re-deriving the history from code alone.
+| April 2026 | Stage 1: LLM tool dispatch. Stage 2: voice input. Stage 3: custom wake word | [plans/](plans/), [brainstorms/](brainstorms/) |
+| 2026-10-15 → 10-21 | Dead-code removal, ReAct loop, streaming and fillers, notifications, launcher, tools, phone app, speaker verification, offline mode, package lock | [decisions.md](decisions.md) |
