@@ -131,6 +131,18 @@ def log(message: str) -> None:
     print(f"[spotify] {message}", flush=True)
 
 
+def log_api_call(response, *args, **kwargs):
+    request = response.request
+    body = request.body
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    reply = (response.text or "").strip().replace("\n", " ")
+    took = int(response.elapsed.total_seconds() * 1000) if response.elapsed else 0
+    log(f"API {request.method} {request.url}" + (f" body={body[:300]}" if body else "")
+        + f" -> HTTP {response.status_code} ({took} ms)" + (f" {reply[:600]}" if reply else ""))
+    return response
+
+
 def device_label(device: dict | None) -> str:
     if not device:
         return "no device"
@@ -142,6 +154,9 @@ class SpotifySkill:
         self.tts = tts
         self.auth = auth or make_auth()
         self.sp = client or spotipy.Spotify(auth_manager=self.auth, requests_timeout=10, retries=1)
+        session = getattr(self.sp, "_session", None)
+        if client is None and session is not None:
+            session.hooks.setdefault("response", []).append(log_api_call)
         self._sleep = sleep
         self.candidates: list[dict] = []
 
