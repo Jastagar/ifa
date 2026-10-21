@@ -28,6 +28,29 @@ PRIORITIES = ("high", "normal", "low")
 
 URGENT_ANNOUNCEMENT = "Sir, there is an urgent message for you."
 
+SETTING_LIMITS = {
+    "settleSec": (1, 60),
+    "ttlSec": (10, 3600),
+    "maxRecent": (1, 50),
+    "maxDiscarded": (1, 500),
+    "listenSec": (2, 30),
+}
+
+
+def parse_settings(raw: dict) -> dict:
+    values = {}
+    for key, (low, high) in SETTING_LIMITS.items():
+        if raw.get(key) is None:
+            continue
+        try:
+            value = float(raw[key])
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number")
+        if not low <= value <= high:
+            raise ValueError(f"{key} must be between {low} and {high}")
+        values[key] = int(value) if key.startswith("max") else value
+    return values
+
 
 def _env_float(name: str, default: float) -> float:
     return float(os.environ.get(name, str(default)))
@@ -90,6 +113,30 @@ class NotificationInbox:
             burst.messages.append(Message(text=text, received_at=now))
             self._enforce_max_locked()
             return burst
+
+    def configure(
+        self,
+        settle_sec: float | None = None,
+        ttl_sec: float | None = None,
+        max_recent: int | None = None,
+        max_discarded: int | None = None,
+    ) -> None:
+        with self._lock:
+            if settle_sec is not None:
+                self.settle_sec = settle_sec
+            if ttl_sec is not None:
+                self.ttl_sec = ttl_sec
+            if max_recent is not None:
+                self.max_recent = max_recent
+            if max_discarded is not None and max_discarded != self._discarded.maxlen:
+                self._discarded = deque(self._discarded, maxlen=max_discarded)
+            self._flush_locked(self._clock())
+            self._enforce_max_locked()
+
+    def settings(self) -> dict:
+        with self._lock:
+            return {"settleSec": self.settle_sec, "ttlSec": self.ttl_sec,
+                    "maxRecent": self.max_recent, "maxDiscarded": self._discarded.maxlen}
 
     def settled(self) -> list[Burst]:
         now = self._clock()

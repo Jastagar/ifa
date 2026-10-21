@@ -11,7 +11,7 @@ from typing import Callable
 
 import numpy as np
 
-from ifa.services.notifications import URGENT_ANNOUNCEMENT
+from ifa.services.notifications import URGENT_ANNOUNCEMENT, parse_settings
 from ifa.services.pairing import lan_address, load_pairing_code
 
 PROTOCOL_VERSION = 1
@@ -219,6 +219,13 @@ class PhoneSession:
             self._start_text(str(message.get("text") or "").strip())
         elif kind == "notification":
             self.server.receive_notification(message)
+        elif kind == "notification_settings":
+            try:
+                applied = self.server.apply_notification_settings(message)
+            except ValueError as exc:
+                self.send_json({"type": "error", "message": f"notification settings: {exc}"})
+            else:
+                self.send_json({"type": "notification_settings", **applied})
         elif kind == "ping":
             self.send_json({"type": "pong"})
         else:
@@ -431,8 +438,24 @@ class PhoneServer:
     def receive_notification(self, message: dict) -> None:
         if self.notifications is None:
             return
-        context = {k: message.get(k) for k in ("packageName", "appName", "title", "text", "receivedAt")}
+        context = {k: message.get(k) for k in ("packageName", "appName", "title", "text", "receivedAt", "priority")}
         self.notifications.receive({"context": context})
+
+    def apply_notification_settings(self, message: dict) -> dict:
+        values = parse_settings(message)
+        if "listenSec" in values:
+            self.notification_listen_sec = values["listenSec"]
+        if self.notifications is not None:
+            self.notifications.inbox.configure(
+                settle_sec=values.get("settleSec"),
+                ttl_sec=values.get("ttlSec"),
+                max_recent=values.get("maxRecent"),
+                max_discarded=values.get("maxDiscarded"),
+            )
+        applied = {**(self.notifications.inbox.settings() if self.notifications else {}),
+                   "listenSec": self.notification_listen_sec}
+        print("[phone] notification settings from the phone: " + ", ".join(f"{k}={v:g}" for k, v in applied.items()))
+        return applied
 
     def ready_payload(self) -> dict:
         return {

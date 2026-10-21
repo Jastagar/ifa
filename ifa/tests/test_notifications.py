@@ -14,6 +14,7 @@ from ifa.services.notifications import (
     NotificationCenter,
     NotificationInbox,
     classify_urgency,
+    parse_settings,
     summarize_bursts,
     template_summary,
 )
@@ -38,6 +39,34 @@ def _inbox(clock, **kw) -> NotificationInbox:
 
 def _add(inbox, sender="Joe", text="hi", package="com.whatsapp", priority="high"):
     return inbox.add(app="WhatsApp", package=package, sender=sender, text=text, priority=priority)
+
+
+class SettingsTests(unittest.TestCase):
+    def test_parse_validates_and_ignores_missing_keys(self):
+        self.assertEqual(parse_settings({"settleSec": "6", "maxRecent": 5.0, "type": "x"}),
+                         {"settleSec": 6.0, "maxRecent": 5})
+        for bad in ({"settleSec": 0}, {"ttlSec": "soon"}, {"maxRecent": 999}, {"listenSec": 1}):
+            with self.assertRaises(ValueError):
+                parse_settings(bad)
+
+    def test_configure_applies_new_limits_right_away(self):
+        clock = FakeClock()
+        inbox = _inbox(clock)
+        for i in range(5):
+            _add(inbox, sender=f"s{i}")
+            clock.advance(1)
+        inbox.configure(max_recent=2, max_discarded=2, settle_sec=10, ttl_sec=30)
+        self.assertEqual(inbox.unread_count(), 2)
+        self.assertEqual([b.sender for b in inbox.older()], ["s2", "s1"])
+        self.assertEqual(inbox.settings(), {"settleSec": 10, "ttlSec": 30, "maxRecent": 2, "maxDiscarded": 2})
+        clock.advance(31)
+        self.assertEqual(inbox.unread_count(), 0)
+
+    def test_priority_from_the_phone_beats_the_built_in_table(self):
+        center = NotificationCenter(_inbox(FakeClock()), classify=lambda b: False, summarize=lambda b: "")
+        burst = center.receive({"context": {"packageName": "com.whatsapp", "title": "Joe", "text": "hi",
+                                            "priority": "low"}})
+        self.assertEqual(burst.priority, "low")
 
 
 class InboxTests(unittest.TestCase):

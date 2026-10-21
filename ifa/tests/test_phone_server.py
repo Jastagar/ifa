@@ -207,7 +207,11 @@ class PhoneServerEndToEndTests(unittest.TestCase):
         self.submitted = []
         self.notifications = []
 
+        from ifa.services.notifications import NotificationInbox
+
         class Inbox:
+            inbox = NotificationInbox(max_recent=7, ttl_sec=90, settle_sec=4, max_discarded=50)
+
             def receive(inner, payload):
                 self.notifications.append(payload)
 
@@ -245,6 +249,35 @@ class PhoneServerEndToEndTests(unittest.TestCase):
                 return ctx.exception.status
 
         self.assertEqual(self._run(go()), 401)
+
+    def test_notification_settings_and_priority_from_the_phone(self):
+        import aiohttp
+
+        async def go():
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(
+                    f"http://127.0.0.1:{self.port}/phone", headers={"X-IFA-Token": "424242"}
+                )
+                await ws.receive()
+                await ws.send_str(json.dumps({"type": "notification_settings", "settleSec": 8,
+                                              "ttlSec": 120, "maxRecent": 3, "maxDiscarded": 20, "listenSec": 10}))
+                applied = json.loads((await ws.receive()).data)
+                await ws.send_str(json.dumps({"type": "notification_settings", "settleSec": 500}))
+                error = json.loads((await ws.receive()).data)
+                await ws.send_str(json.dumps({"type": "notification", "packageName": "com.whatsapp",
+                                              "title": "Joe", "text": "hi", "priority": "high"}))
+                await ws.send_str(json.dumps({"type": "ping"}))
+                await ws.receive()
+                await ws.close()
+                return applied, error
+
+        applied, error = self._run(go())
+        self.assertEqual(applied, {"type": "notification_settings", "settleSec": 8, "ttlSec": 120,
+                                   "maxRecent": 3, "maxDiscarded": 20, "listenSec": 10})
+        self.assertEqual(self.server.notification_listen_sec, 10)
+        self.assertEqual(error["type"], "error")
+        self.assertIn("settleSec", error["message"])
+        self.assertEqual(self.notifications[-1]["context"]["priority"], "high")
 
     def test_voice_turn_round_trip(self):
         import aiohttp
