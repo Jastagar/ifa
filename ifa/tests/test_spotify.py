@@ -91,6 +91,20 @@ class SpotifySkillTests(unittest.TestCase):
         self.sp.transfer_playback.assert_called_once_with(device_id="pc", force_play=True)
         self.assertEqual(self.sp.start_playback.call_count, 2)
 
+    def test_on_this_pc_it_starts_the_app_and_plays_again(self):
+        from unittest.mock import patch
+        import socket
+        host = socket.gethostname().split(".")[0]
+        pc = {"id": "me", "name": host, "type": "Computer", "is_active": True}
+        self.sp.devices.return_value = {"devices": [pc]}
+        states = iter([{"is_playing": False}] * 10 + [{"is_playing": True, "item": TRACK, "device": {"name": host}}] * 20)
+        self.sp.current_playback.side_effect = lambda: next(states)
+        with patch.object(SpotifySkill, "_launch_app") as launch:
+            self.assertEqual(self.skill.play("tum hi ho"), f"Playing Tum Hi Ho by Arijit Singh on {host}.")
+        launch.assert_called_once()
+        self.assertEqual(self.sp.start_playback.call_count, 2)
+        self.sp.transfer_playback.assert_not_called()
+
     def test_prefers_this_computer_when_nothing_is_active(self):
         self.sp.devices.return_value = {"devices": [{"id": "ph", "type": "Smartphone", "is_active": False},
                                                     {"id": "pc", "type": "Computer", "is_active": False}]}

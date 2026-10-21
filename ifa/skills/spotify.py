@@ -114,7 +114,17 @@ def describe(track: dict) -> str:
     return f"{track['name']} by {artists}" + (f" ({extra})" if extra else "") + (f" [{variant} version]" if variant else "")
 
 
-VERIFY_DELAY_SEC = 1.5
+VERIFY_POLL_SEC = 0.5
+VERIFY_TIMEOUT_SEC = 5.0
+APP_START_WAIT_SEC = 12
+
+
+def is_this_computer(device: dict | None) -> bool:
+    import socket
+
+    name = str((device or {}).get("name") or "").strip().lower()
+    host = socket.gethostname().split(".")[0].strip().lower()
+    return bool(name) and (name == host or name.startswith(host)) and (device or {}).get("type") == "Computer"
 
 
 def log(message: str) -> None:
@@ -208,25 +218,62 @@ class SpotifySkill:
 
     def _start(self, device: dict, track: dict | None, done: str) -> str:
         uris = [track["uri"]] if track else None
-        for attempt in (1, 2):
-            if attempt == 2:
-                log(f"transfer playback to {device_label(device)} and retry")
-                self.sp.transfer_playback(device_id=device["id"], force_play=True)
-                self._sleep(1.0)
+        log(f"start_playback on {device_label(device)} uris={uris}")
+        self.sp.start_playback(device_id=device["id"], uris=uris)
+        playing = self._verify(track)
+        if playing is None and is_this_computer(device):
+            log("nothing is playing; starting the Spotify app on this PC")
+            self._launch_app()
+            device = self._wait_for_this_computer() or device
             log(f"start_playback on {device_label(device)} uris={uris}")
             self.sp.start_playback(device_id=device["id"], uris=uris)
-            self._sleep(VERIFY_DELAY_SEC)
+            playing = self._verify(track)
+        if playing is None:
+            log(f"still nothing; transfer playback to {device_label(device)} and retry")
+            self.sp.transfer_playback(device_id=device["id"], force_play=True)
+            self._sleep(1.0)
+            self.sp.start_playback(device_id=device["id"], uris=uris)
+            playing = self._verify(track)
+        if playing is None:
+            raise SpotifyError(
+                f"Spotify accepted the play command but nothing is playing on {device.get('name')}. "
+                "Open the Spotify app on that device (or play anything once by hand) and try again.")
+        return f"{done} on {(playing.get('device') or {}).get('name') or device.get('name')}."
+
+    def _verify(self, track: dict | None, timeout: float = VERIFY_TIMEOUT_SEC) -> dict | None:
+        waited = 0.0
+        while True:
+            self._sleep(VERIFY_POLL_SEC)
+            waited += VERIFY_POLL_SEC
             playback = self.sp.current_playback() or {}
             item = playback.get("item") or {}
-            now = playback.get("device") or {}
-            log(f"check: is_playing={playback.get('is_playing')} device={device_label(now)} "
-                f"track={item.get('name')!r} uri={item.get('uri')}")
-            right_track = track is None or item.get("uri") == track["uri"]
-            if playback.get("is_playing") and right_track:
-                return f"{done} on {now.get('name') or device.get('name')}."
-        raise SpotifyError(
-            f"Spotify accepted the play command but nothing is playing on {device.get('name')}. "
-            "Open the Spotify app on that device (or play anything once by hand) and try again.")
+            ok = playback.get("is_playing") and (track is None or item.get("uri") == track["uri"])
+            if ok or waited >= timeout:
+                log(f"check after {waited:.1f}s: is_playing={playback.get('is_playing')} "
+                    f"device={device_label(playback.get('device'))} track={item.get('name')!r}")
+                return playback if ok else None
+
+    def _launch_app(self) -> None:
+        import subprocess
+        try:
+            if sys.platform == "win32":
+                os.startfile("spotify:")
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-a", "Spotify"])
+            else:
+                subprocess.Popen(["spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            log(f"couldn't start the Spotify app: {exc}")
+
+    def _wait_for_this_computer(self) -> dict | None:
+        for _ in range(APP_START_WAIT_SEC):
+            self._sleep(1.0)
+            for d in self.sp.devices()["devices"]:
+                if is_this_computer(d) and not d.get("is_restricted"):
+                    log(f"app is up: {device_label(d)}")
+                    return d
+        log("the Spotify app didn't show up as a device")
+        return None
 
     def _current_track(self) -> dict | None:
         playback = self.sp.current_playback() or {}
