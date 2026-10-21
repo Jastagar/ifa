@@ -41,12 +41,14 @@ ACTION_CLAIM = re.compile(
     r"^(?:(?:ok(?:ay)?|sure|alright|done|got it|sir|boss)[,!.\s]+)*(?:now\s+)?"
     r"(?:playing|paused|pausing|skipping|skipped|resuming|resumed|opening|opened|launching|launched|"
     r"starting|started|running|setting|sending|sent|switching|switched)\b"
-    r"|\b(?:is|'s|are)\s+(?:now\s+)?(?:playing|open|opened|paused|running)\b",
+    r"|\b(?:is|'s|are)\s+(?:now\s+)?(?:playing|open|opened|paused|running)\b"
+    r"|^(?:(?:ok(?:ay)?|sure|alright|got it|sir|boss)[,!.\s]+)*(?:let me|i'?ll|i will|i'?m going to|i am going to)\s+"
+    r"(?:check|open|play|send|set|read|look|search|launch|start|run|pause|skip|remind|save|note|remember|get|find|summari[sz]e)\b",
     re.IGNORECASE,
 )
 ACTION_CLAIM_CORRECTION = (
-    "[Ifa system note, not from the user: you said you did something, but no tool was called "
-    "in this turn, so nothing happened. If Sir asked for an action, call the right tool now. "
+    "[Ifa system note, not from the user: you said you did or would do something, but no tool was "
+    "called in this turn, so nothing happened. If Sir asked for an action, call the right tool now. "
     "If he was only chatting, answer again without saying you did anything.]"
 )
 

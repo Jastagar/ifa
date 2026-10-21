@@ -113,3 +113,13 @@ Every significant choice since the October 2026 rework: what we decided, why, an
 - **Why:** the unread note on every message, plus a turn-ending tool, plus memory of earlier calls, made Ifa read notifications instead of answering. A stronger prompt wouldn't be reliable on a 9B model.
 - **What changed:** the note and the tool apply only right after an announcement (90 s) or when your message mentions notifications or messages. Otherwise the tool refuses with an error, and the turn continues to answer you.
 
+### 29. Act on clear requests; catch promises as well as claims
+- **Why:** you saw Ifa re-confirming clear requests on the PC. On qwen3.5:9b it asked back 0/12 times, so the likely cause is the PC model applying run_command's "ask first" too broadly, or an edited persona. The probe also showed two other problems:
+  - the model parroting the persona's example ("Discord's open, Sir.") with no tool call
+  - promising ("Let me check…", "I'll send…") with no tool call
+- **What changed:**
+  - The persona says to act right away on clear requests and to ask only when something is missing. run_command is named as the only tool that always asks.
+  - The example sentence was removed.
+  - The action check also catches a first sentence that promises an action when no tool has run.
+- **Measured:** 18 requests, 1 ask-back (a reasonable WhatsApp detail question). run_command still proposes first.
+

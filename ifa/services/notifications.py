@@ -30,7 +30,7 @@ PRIORITIES = ("high", "normal", "low")
 URGENT_ANNOUNCEMENT = "Sir, there is an urgent message for you."
 ANNOUNCED_WINDOW_SEC = 90
 ASKS_ABOUT_NOTIFICATIONS = re.compile(
-    r"\b(notifications?|messages?|msgs?|texts?|texted|whats ?app|telegram|sms|e-?mails?|mails?|"
+    r"\b(notifications?|notifs?|messages?|msgs?|texts?|texted|whats ?app|telegram|sms|e-?mails?|mails?|"
     r"who (called|texted|messaged|wrote|pinged)|kis(ka|ne|ki)|missed|unread|pinged)\b",
     re.IGNORECASE,
 )

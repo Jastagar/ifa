@@ -221,7 +221,7 @@ class FabricatedToolResultTests(AgentLoopTestCase):
         result = self.run_turn(llm, "What is it?", spoken=spoken)
 
         self.assertEqual(result, "Joe wants to know if you're free.")
-        self.assertEqual(spoken, ["I'll check.", "Joe wants to know if you're free."])
+        self.assertEqual(spoken, ["Joe wants to know if you're free."])
         retry_request = llm.requests[1]["messages"]
         self.assertIn("you wrote a tool result yourself", retry_request[-1]["content"])
         self.assertFalse(any("Report due" in (m.get("content") or "") for m in retry_request))
@@ -372,3 +372,16 @@ class UnaskedNotificationTests(AgentLoopTestCase):
         self.assertIn("didn't ask about notifications", _tool_messages(llm.requests[1])[0]["content"])
         self.assertEqual(inbox.unread_count(), 1)
         self.assertNotIn("unread phone notification", llm.requests[0]["messages"][-1]["content"])
+
+
+class ActionClaimPatternTests(unittest.TestCase):
+    def test_claims_and_promises_are_caught(self):
+        for text in ("Playing Kesariya, Sir.", "Discord's open, Sir.", "Let me check your new notifications for you.",
+                     "I'll send that message to John for you.", "Got it, Sir. I'll remember that.",
+                     "Okay, I'm going to open YouTube."):
+            self.assertTrue(agent_stream.ACTION_CLAIM.search(text), text)
+
+    def test_ordinary_answers_are_not(self):
+        for text in ("All good, Sir. How about you?", "It's 4:35 PM, Sir.", "A black hole is a region of space.",
+                     "I'll need the time for that reminder, Sir.", "Who should I send it to?"):
+            self.assertFalse(agent_stream.ACTION_CLAIM.search(text), text)
