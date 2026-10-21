@@ -123,7 +123,7 @@ SETTINGS = (
             "While the phone app is connected, the PC mic stops listening and notifications nudge the phone instead."),
     Setting("IFA_PHONE_GREETING", "Greeting when the phone connects", "notifications", "text",
             "Hello sir, I am live, welcome home",
-            "Played on the phone when it connects after being away. Empty turns it off."),
+            "Played on the phone and the PC speakers when the phone connects. Empty turns it off."),
     Setting("IFA_PHONE_GREETING_AFTER_MIN", "Greet only after being away (min)", "notifications", "number", "0",
             "0 greets on every connect. Raise it so Wi-Fi blips don't repeat the greeting.", minimum=0, maximum=1440),
     Setting("IFA_PHONE_PORT", "Phone app port", "notifications", "number", "8789",

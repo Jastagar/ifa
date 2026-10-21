@@ -525,6 +525,8 @@ class GreetingTests(unittest.TestCase):
                              warm_up=lambda: None).start()
         server.greeting = "Hello sir, I am live, welcome home"
         server.greet_after_sec = 600
+        pc_greetings = []
+        server.on_greet = lambda: pc_greetings.append(1)
 
         async def connect_once():
             async with aiohttp.ClientSession() as http:
@@ -546,3 +548,4 @@ class GreetingTests(unittest.TestCase):
         self.assertEqual(asyncio.run(connect_once()), [])
         server._last_disconnect -= 601
         self.assertEqual(len(asyncio.run(connect_once())), 1)
+        self.assertEqual(len(pc_greetings), 2)

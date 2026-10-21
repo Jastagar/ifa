@@ -239,6 +239,13 @@ def run() -> None:
         if done:
             done.wait()
 
+    def greet_on_pc() -> None:
+        audio = fillers.clip(greeting)
+        if audio is not None:
+            tts.play_clip(audio, greeting)
+        else:
+            tts.enqueue(greeting)
+
     input_mode = init_input(tts, notifications, announce_urgent)
     phones = None
 
@@ -282,6 +289,7 @@ def run() -> None:
         lambda text, phone: turns.put((text, phone)), tts, notifications,
         urgent_clip=lambda: fillers.clip(URGENT_ANNOUNCEMENT),
         greeting_clip=lambda: fillers.clip(greeting) if greeting else None,
+        on_greet=greet_on_pc,
     )
     if phones is not None:
         input_mode.pause_while(phones.has_priority)

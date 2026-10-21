@@ -472,6 +472,7 @@ class PhoneServer:
         speaker_check=None,
         greeting_clip: Callable[[], np.ndarray | None] | None = None,
         greeting: str = "",
+        on_greet: Callable[[], None] | None = None,
     ) -> None:
         self.submit = submit
         self.tts = tts
@@ -485,6 +486,7 @@ class PhoneServer:
         self.priority = os.environ.get("IFA_PHONE_PRIORITY", "1").lower() not in {"0", "false", "no", "off"}
         self.urgent_clip = urgent_clip or (lambda: None)
         self.greeting = greeting
+        self.on_greet = on_greet or (lambda: None)
         self.greeting_clip = greeting_clip or (lambda: None)
         self.greet_after_sec = float(os.environ.get("IFA_PHONE_GREETING_AFTER_MIN", "0")) * 60
         self._last_disconnect: float | None = None
@@ -689,6 +691,10 @@ class PhoneServer:
         away = None if self._last_disconnect is None else time.monotonic() - self._last_disconnect
         if self.greeting and first and (away is None or away >= self.greet_after_sec):
             session.greet(self.greeting, self.greeting_clip())
+            try:
+                self.on_greet()
+            except Exception as exc:
+                print(f"[phone] couldn't play the greeting on the PC: {exc}")
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
@@ -740,13 +746,15 @@ def greeting_text() -> str:
     return os.environ.get("IFA_PHONE_GREETING", "Hello sir, I am live, welcome home").strip()
 
 
-def start_phone_server(submit, tts, notifications=None, urgent_clip=None, greeting_clip=None) -> PhoneServer | None:
+def start_phone_server(submit, tts, notifications=None, urgent_clip=None, greeting_clip=None,
+                       on_greet=None) -> PhoneServer | None:
     if not phone_enabled():
         print("[phone] phone app connection disabled (IFA_PHONE_ENABLED=0)")
         return None
     try:
         return PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip,
-                           greeting_clip=greeting_clip, greeting=greeting_text()).start()
+                           greeting_clip=greeting_clip, greeting=greeting_text(),
+                           on_greet=on_greet).start()
     except Exception as exc:
         print(f"[phone] could not start the phone server: {exc}")
         return None
