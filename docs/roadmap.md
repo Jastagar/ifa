@@ -1,6 +1,6 @@
 # Roadmap and open items
 
-What's planned, what's parked, what's built but unverified, and known limitations. Last updated 2026-10-21.
+What's planned, what's parked, what's built but unverified, and known limitations. Last updated 2026-10-22.
 
 ---
 
@@ -33,6 +33,7 @@ These pass tests on the Mac but haven't run on the real hardware yet:
 - **Multi-speaker:** recognise family members by name with limited permissions.
 - **Phone off home Wi-Fi:** Tailscale, plus TLS for the socket.
 - **Opus audio** between the phone and PC.
+- **Gameplay review** ("what mistake did I make?"): save NVIDIA's Instant Replay buffer, pull frames, ask the vision model. See [brainstorms/2026-10-22-gameplay-review-idea.md](brainstorms/2026-10-22-gameplay-review-idea.md).
 
 ## Known limitations
 
