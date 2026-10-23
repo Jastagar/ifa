@@ -173,8 +173,11 @@ class Launcher:
 
         values = env_file.read_env(self.env_path)
         secret_keys = [s.key for s in SETTINGS if s.secret] + [k for k in values if k not in BY_KEY]
-        report = build_report(self.log.text(), self.checks(), self.setup_steps(),
-                              [values[k] for k in secret_keys if values.get(k)])
+        checks = self.checks()
+        secrets_found = [values[k] for k in secret_keys if values.get(k)]
+        # The pairing code may come from .phone_token rather than .env, so add it explicitly.
+        secrets_found.append(str((checks.get("phone") or {}).get("pairing_code") or ""))
+        report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found)
         url = upload(report)
         return {"url": url, "id": url.rstrip("/").rsplit("/", 1)[-1], "lines": report.count("\n")}
 

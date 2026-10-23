@@ -16,6 +16,7 @@ TOKEN_PATTERNS = [
     re.compile(r"\b(?:sk|pk)-[A-Za-z0-9_-]{20,}"),
     re.compile(r"\bya29\.[A-Za-z0-9_.-]{20,}"),
     re.compile(r"(?i)(pairing code[:\s]+)\d{4,8}"),
+    re.compile(r"(?i)(\"pairing_code\":\s*\")[^\"]*"),
     re.compile(r"(?i)(X-IFA-Token[\"':\s]+)[^\s\"']+"),
 ]
 
