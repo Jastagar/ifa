@@ -1,6 +1,6 @@
 # Roadmap and open items
 
-What's planned, what's parked, what's built but unverified, and known limitations. Last updated 2026-10-22.
+What's planned, what's parked, what's built but unverified, and known limitations. Last updated 2026-10-23.
 
 ---
 
@@ -34,6 +34,41 @@ These pass tests on the Mac but haven't run on the real hardware yet:
 - **Phone off home Wi-Fi:** Tailscale, plus TLS for the socket.
 - **Opus audio** between the phone and PC.
 - **Gameplay review** ("what mistake did I make?"): save NVIDIA's Instant Replay buffer, pull frames, ask the vision model. See [brainstorms/2026-10-22-gameplay-review-idea.md](brainstorms/2026-10-22-gameplay-review-idea.md).
+
+## Found while documenting the flows (2026-10-23)
+
+Read-only review while writing [flows/](flows/README.md). Not yet fixed; this is the polish list.
+
+**Can crash or go silent**
+- [ ] `whats_app` returns pywhatkit's result (probably `None`) and `switch_mode` can return an exception object; `tool_step` calls `.strip()` on it, which can crash the PC turn loop.
+- [ ] The "I couldn't figure out how to do that." give-up paths (fabrication guard twice, malformed tool calls) are never spoken or saved to memory.
+- [ ] The activation API (port 8787) has no try/except: a port clash kills startup. The phone server already handles this.
+- [ ] Phone disconnects mid-reply: the rest of the reply plays on the PC speakers instead of being dropped.
+- [ ] Phone `cancel` doesn't stop the agent or the TTS while Ifa is thinking or speaking.
+
+**Wrong behaviour**
+- [ ] The phone always sends `priority: "normal"`, so `APP_PRIORITY` (WhatsApp = high) and "skip low priority" never apply to phone notifications.
+- [ ] Dedupe is skipped when an app has a note, so repeated texts are counted (and saved to history) twice.
+- [ ] `take_unread` moves bursts that are still settling to "older", and they never get an urgency check.
+- [ ] `_expect_reply` never times out: after an unanswered follow-up, the next wake-word turn misses the short-command voice pass.
+- [ ] All guards share one retry per turn, so a second guard in the same turn can't retry.
+- [ ] The model-error retry only fires when the error mentions "tool".
+- [ ] `listenSec` from the phone doesn't reach the PC's `VoiceInput`.
+- [ ] Saving memories in the launcher deletes any memory the agent added while the page was open (`replace_all`).
+
+**Logs, speed, rough edges**
+- [ ] A stray `print(fallback_from)` prints `None` at every voice start, and the `[voice]` line says `whisper=small.en` while the real default is the Apex model.
+- [ ] Silero VAD is loaded again on every capture, and silently falls back to an energy estimate on failure.
+- [ ] Whisper loads on the first PC voice turn (only a phone connect warms it up), so the first turn is slow.
+- [ ] The wake-word fallback name `"ifa"` isn't an openWakeWord built-in, so a missing `ifa.onnx` likely drops Ifa into text mode.
+- [ ] `run.bat` skips the voice-model download that `run.command` and `run.ps1` do.
+- [ ] `ifa.db` is relative to the working directory.
+- [ ] `call_n8n_workflow` is offered to the model even with no workflows configured.
+- [ ] `end_conversation`, `run_command` and `restart_ifa` get the generic filler ("One sec.").
+- [ ] Fillers on the phone are spoken but don't appear in the phone chat.
+- [ ] No launcher rows for `IFA_NOTIF_LISTEN_SEC`, `IFA_PHONE_HOST` or the `IFA_NOTIF_*` inbox settings. The app hard-codes discovery port 8788.
+- [ ] No Hugging Face connection check in the launcher (it was lost in the 2026-10-21 reset).
+- [ ] "Download voice models" has no done-check, so "Run missing steps" always re-runs it.
 
 ## Known limitations
 
