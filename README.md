@@ -124,6 +124,21 @@ All launchers self-heal: create the Python venv, install dependencies, start Oll
 
 The wake word is `ifa` for v1 (openWakeWord built-in). Custom "hey ifa" training is planned but deferred. Set `IFA_WAKE_MODEL=alexa` / `hey_jarvis` / `hey_rhasspy` to pick a different built-in, or point it at a custom `.onnx` file.
 
+### On a Mac (Apple Silicon)
+
+Ifa runs on an Apple Silicon Mac. Measured on an M4 Pro (24 GB):
+
+| Part | Runs on | Speed |
+|---|---|---|
+| LLM (Ollama) | Apple GPU (Metal) | depends on the model |
+| Whisper | Apple GPU (`mps`, fp16) | ~1 s for 8 s of speech |
+| Chatterbox | CPU (as fast as `mps` here, and leaves the GPU to Ollama) | ~1.0–1.3× real time |
+
+- Speech starts about 3 s after the reply's first sentence, and long replies can have short gaps between sentences. The PC's NVIDIA GPU is several times faster.
+- Use a model you can pull on the Mac (for example `IFA_OLLAMA_MODEL=qwen3.5:9b`). A custom model made on the PC only exists there.
+- Memory: the 9B model (~8.6 GB), Chatterbox (~4 GB) and Whisper (~2 GB) together use about 15 GB. Close other heavy apps on a 24 GB Mac.
+- The first voice run asks for microphone access for Terminal (System Settings → Privacy & Security → Microphone).
+
 ### Prerequisites
 
 - Python 3.12+ on PATH

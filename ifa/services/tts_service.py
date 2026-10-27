@@ -17,11 +17,11 @@ if perth.PerthImplicitWatermarker is None:
     perth.PerthImplicitWatermarker = perth.DummyWatermarker
 
 from chatterbox.tts_turbo import ChatterboxTurboTTS
-from blingfire import text_to_sentences
 from rich.console import Console
 
 from ifa.utils import latency
 from ifa.utils.devices import resolve_device
+from ifa.utils.sentences import split_sentences
 
 _console = Console()
 
@@ -37,10 +37,10 @@ class TTSService:
 
         self._stop_event = threading.Event()
 
-        self.device = resolve_device("IFA_TTS_DEVICE")
+        # On a Mac, Chatterbox ran no faster on the Apple GPU than on the CPU (both ~1.0-1.3x
+        # real time on an M4 Pro), and the GPU is busy with Ollama, so auto picks the CPU there.
+        self.device = resolve_device("IFA_TTS_DEVICE", auto_mps=False)
 
-
-        _console.print("PROCESSOR TYPE :",torch.cuda.is_available())
 
         _console.print(
             f"Loading Chatterbox Turbo on {self.device}"
@@ -190,5 +190,4 @@ class TTSService:
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
-        lines = [s for s in text_to_sentences(text).splitlines() if s]
-        return lines 
+        return split_sentences(text) 

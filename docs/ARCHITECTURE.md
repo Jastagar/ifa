@@ -92,7 +92,7 @@ PYTHONPATH=. venv/bin/python -m unittest discover ifa/tests
 - The suite mocks the LLM, audio devices and heavy models (a scripted fake LLM drives the agent-loop tests).
 - `test_tool_call_bench.py` is a manual bench against a live Ollama, with sandboxed tool handlers.
 - `test_speaker.py` includes a real-model test when `IFA_SR_DATA` points at sherpa-onnx's sample recordings.
-- On a Mac, `blingfire` (Intel-only) has to be stubbed.
+- On an Apple Silicon Mac, Whisper and Chatterbox run on the Apple GPU (`mps`); sentence splitting is plain Python ([ifa/utils/sentences.py](../ifa/utils/sentences.py)).
 
 ## When something's wrong
 

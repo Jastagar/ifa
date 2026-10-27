@@ -65,5 +65,4 @@ How Ifa gets installed, configured and started, and why it stays working without
 
 ## Next
 
-- Make Ifa runnable on Apple Silicon: replace `blingfire` (Intel-only on macOS) and add an `mps` device option.
 - A one-click "rebuild the venv" for when its Python is wrong. On Windows the launcher can't delete the venv it's running from, so it would have to run from the system Python.

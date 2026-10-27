@@ -69,4 +69,4 @@ Streaming exposed a race: an acknowledgement could play *after* the answer had s
 
 - No barge-in: you can't interrupt Ifa mid-sentence. This was deferred because replies are short.
 - A false wake word still plays the chime before the voice check ignores the audio.
-- On Apple Silicon, `blingfire` (sentence splitting) only ships an Intel build, and there's no `mps` device option, so the full voice stack isn't runnable on the Mac yet. See [roadmap.md](../roadmap.md).
+- On Apple Silicon, Whisper (fp16) and Chatterbox run on the Apple GPU (`mps`). Sentence splitting is plain Python ([ifa/utils/sentences.py](../../ifa/utils/sentences.py)); it replaced `blingfire`, which only shipped an Intel build for macOS.

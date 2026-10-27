@@ -342,7 +342,8 @@ function renderFacts() {
   const facts = $("facts");
   const row = (k, ...v) => [el("dt", {}, k), el("dd", {}, ...v)];
   const gpu = sys.cuda_gpus.length ? el("span", { class: "ok" }, sys.cuda_gpus.join(", "))
-    : el("span", { class: "warn" }, sys.apple_silicon ? "Apple Silicon (no CUDA; models run on CPU)" : "No CUDA GPU found");
+    : sys.apple_silicon ? el("span", { class: "ok" }, "Apple Silicon GPU (mps)")
+    : el("span", { class: "warn" }, "No CUDA GPU found");
   const deviceNotes = ["IFA_WHISPER_DEVICE", "IFA_TTS_DEVICE"].filter((k) => fieldValue(k) === "cuda" && !sys.cuda_gpus.length);
   const model = fieldValue("IFA_OLLAMA_MODEL");
   let modelState;

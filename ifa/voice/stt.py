@@ -38,7 +38,7 @@ def _load_model():
 
         dtype = (
             torch.float16
-            if device == "cuda"
+            if device in ("cuda", "mps")
             else torch.float32
         )
 

@@ -34,16 +34,16 @@ GROUPS = (
     ("advanced", "Advanced"),
 )
 
-DEVICES = ("auto", "cuda", "cpu")
+DEVICES = ("auto", "cuda", "mps", "cpu")
 
 SETTINGS = (
     Setting("IFA_MODE", "Input mode", "launch", "select", "text",
             "text: type in the launcher console. voice: wake word and microphone.", ("text", "voice")),
 
     Setting("IFA_WHISPER_DEVICE", "Speech-to-text device", "hardware", "select", "auto",
-            "Where Whisper runs. auto uses the GPU when CUDA is available.", DEVICES),
+            "Where Whisper runs. auto uses the NVIDIA GPU (cuda), else the Apple GPU (mps), else the CPU.", DEVICES),
     Setting("IFA_TTS_DEVICE", "Text-to-speech device", "hardware", "select", "auto",
-            "Where Chatterbox runs. auto uses the GPU when CUDA is available.", DEVICES),
+            "Where Chatterbox runs. auto uses the NVIDIA GPU (cuda), else the CPU. On a Mac the CPU is as fast as mps and leaves the GPU to Ollama.", DEVICES),
 
     Setting("IFA_OLLAMA_MODEL", "Model", "model", "text", "",
             "Ollama model name. Required."),

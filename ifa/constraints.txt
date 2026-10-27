@@ -15,7 +15,6 @@ attrs==26.1.0
 audioread==3.1.0
 av==17.0.0
 beautifulsoup4==4.15.0
-blingfire==0.1.8
 blinker==1.9.0
 brotli==1.2.0
 catalogue==2.0.10

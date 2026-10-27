@@ -73,13 +73,12 @@ Read-only review while writing [flows/](flows/README.md). Not yet fixed; this is
 ## Known limitations
 
 - No barge-in (you can't interrupt Ifa while it speaks).
-- The full voice stack doesn't run on Apple Silicon: `blingfire` is Intel-only on macOS, and there's no `mps` device option.
 - Short replies (under about 1 s) are trusted for 30 s after a verified utterance rather than checked.
 - Spotify, YouTube and web search, WhatsApp sending and n8n need the internet.
 - The PC wasn't reachable from the Mac over the LAN while Cloudflare WARP was on (Atomicwork-managed). Pausing it wasn't enough in testing; quitting it or using Tailscale should fix that.
 
 ## Housekeeping
 
-- Three tests fail on the Mac and predate this work. `test_wake_word` (2) asserts download behaviour that changed. `test_tts_phrase_batch` (1) depends on `blingfire`, which can't load on the Mac. `test_stt` is out of date after the Apex model change.
+- Two tests fail on the Mac and predate this work. `test_wake_word` (2) asserts download behaviour that changed. `test_stt` is out of date after the Apex model change.
 - The GitHub repo moved to `https://github.com/Jastagar/ifa.git`. Pushes work through the redirect; update the remote URL when convenient.
 - Rotate the Spotify client secret that was once committed in history.
