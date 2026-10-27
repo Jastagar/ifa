@@ -134,3 +134,9 @@ Every significant choice since the October 2026 rework: what we decided, why, an
 - **Fix:** `IFA_OLLAMA_NUM_CTX` (8192, launcher: Language model) is sent on every request, streaming and one-off alike, so Ollama never reloads the model over a size change.
 - **Lesson:** the context limit flagged in the 2026-10-16 discussion (MLX ignores it, the PC enforces it) became a real failure once the tool list grew.
 
+
+### 32. Stay on the 9B dense model; no MoE for now (2026-10-27)
+- **Considered:** Qwen3.6-35B-A3B (uncensored HauhauCS build, ~19 GB at IQ4_XS, vision included) and Qwen3-30B-A3B, run with ~8 GB on the GPU and the rest in the PC's 32 GB of RAM.
+- **Why not:** it doesn't fit next to Chatterbox and Whisper in 16 GB of VRAM. The spill to RAM would cost about half the writing speed (est. 20–35 tok/s vs 42–52), slower prompt reading, 15–30 s reloads, and most of the PC's RAM and GPU, so no gaming or heavy multitasking while Ifa runs. Not worth it for a voice assistant.
+- **Cheaper wins instead:** trim the tool descriptions (shorter prompt), keep the model loaded, and consider Q5_K_M/Q6_K of the current model if quality needs a nudge.
+- **Revisit when:** a GPU with 24 GB+ of VRAM, or an MoE that fits fully in ~10 GB with tool calling as good as the 9B.
