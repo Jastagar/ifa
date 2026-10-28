@@ -113,7 +113,7 @@ class SpotifySkillTests(unittest.TestCase):
                                                     {"id": "pc", "type": "Computer", "is_active": False}]}
         self.skill.play("tum hi ho")
         self.assertEqual(self.sp.start_playback.call_args.kwargs["device_id"], "pc")
-        self.sp.transfer_playback.assert_called_once_with(device_id="pc", force_play=False)
+        self.sp.transfer_playback.assert_not_called()
 
     def test_api_errors_become_sentences(self):
         self.sp.pause_playback.side_effect = SpotifyException(403, -1, "Player command failed", reason="PREMIUM_REQUIRED")
@@ -163,6 +163,11 @@ class SearchTests(unittest.TestCase):
         queries = [c.kwargs["q"] for c in self.sp.search.call_args_list]
         self.assertEqual(queries, ["track:lover artist:diljit", "lover diljit"])
         self.assertEqual(self.sp.search.call_args.kwargs["market"], "from_token")
+
+    def test_unplayable_results_are_skipped(self):
+        self.results({**track("Alpha", "Avi Gill", "u:blocked"), "is_playable": False}, track("Alpha", "Ravi Basrur", "u:ok"))
+        self.skill.search("alpha")
+        self.assertEqual([t["uri"] for t in self.skill.candidates], ["u:ok"])
 
     def test_duplicates_are_listed_once(self):
         self.results(track("Kesariya", "Arijit Singh", "u:1"), track("Kesariya", "Arijit Singh", "u:2"),

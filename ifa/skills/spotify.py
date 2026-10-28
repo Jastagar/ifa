@@ -99,8 +99,8 @@ def match_score(track: dict, query: str, artist: str | None, rank: int) -> float
     variant = variant_of(track)
     if variant:
         score += 0.4 if variant in wanted else -0.6
-    score += 0.3 * track.get("popularity", 0) / 100
-    return score - 0.02 * rank
+    # Spotify dropped `popularity` for developer-mode apps (Feb 2026); its own result order is the popularity signal now.
+    return score - 0.04 * rank
 
 
 def song_name(track: dict) -> str:
@@ -208,7 +208,10 @@ class SpotifySkill:
             if items:
                 break
         seen, unique = set(), []
-        for rank, track in enumerate(t for t in items if t):
+        playable = [t for t in items if t and t.get("is_playable", True) is not False]
+        if len(playable) < len([t for t in items if t]):
+            log(f"skipped {len([t for t in items if t]) - len(playable)} result(s) Spotify can't play in this region")
+        for rank, track in enumerate(playable):
             key = (_normalize(track["name"]), _normalize(track["artists"][0]["name"]) if track.get("artists") else "")
             if key not in seen:
                 seen.add(key)
@@ -244,12 +247,8 @@ class SpotifySkill:
 
     def _start(self, device: dict, track: dict | None, done: str) -> str:
         uris = [track["uri"]] if track else None
-        if not device.get("is_active"):
-            # Playing straight onto an idle desktop app can leave its controls blank:
-            # make it the active device first, then send play once.
-            log(f"transfer playback to {device_label(device)} first (it isn't the active device)")
-            self.sp.transfer_playback(device_id=device["id"], force_play=False)
-            self._sleep(1.0)
+        # One call: play with device_id also makes that device active. A separate transfer right before it
+        # made the desktop app drop off Spotify (the next play got 404 "Not found").
         log(f"start_playback on {device_label(device)} uris={uris}")
         self.sp.start_playback(device_id=device["id"], uris=uris)
         playing = self._verify(track)
@@ -382,7 +381,7 @@ def doctor() -> int:
         return response
 
     me = call("GET", "/me").json()
-    print(f"[doctor] account: {me.get('display_name')} ({me.get('id')}), country {me.get('country')}, product {me.get('product')}")
+    print(f"[doctor] account: {me.get('display_name')} ({me.get('id')})")
     devices = call("GET", "/me/player/devices").json().get("devices", [])
     host = socket.gethostname()
     print(f"[doctor] this PC's name: {host}")
