@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKEN_CACHE = REPO_ROOT / ".spotify_token"
 SCOPE = "user-modify-playback-state user-read-playback-state"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
-DEVICE_WAIT_SEC = 8
+DEVICE_WAIT_SEC = 12
 SEARCH_LIMIT = 10
 MAX_CANDIDATES = 6
 VARIANTS = ("slowed", "reverb", "sped up", "lofi", "lo-fi", "lo fi", "remix", "cover", "karaoke",
@@ -61,8 +61,11 @@ def explain(exc: Exception) -> str:
             return "The Spotify login has expired. " + LOGIN_HINT
         if reason == "PREMIUM_REQUIRED" or exc.http_status == 403:
             return "Spotify only allows playback control on Premium accounts."
-        if reason == "NO_ACTIVE_DEVICE" or exc.http_status == 404:
+        if reason == "NO_ACTIVE_DEVICE":
             return "Spotify isn't open on any device. Open the Spotify app and try again."
+        if exc.http_status == 404:
+            return ("Spotify lists the device but can't reach it. Fully quit the Spotify app "
+                    "(tray icon, Quit), open it again, and retry.")
         if exc.http_status == 429:
             return "Spotify is rate limiting requests. Try again in a minute."
         return f"Spotify returned an error ({exc.http_status}): {exc.msg}"
@@ -320,6 +323,9 @@ class SpotifySkill:
         for attempt in range(DEVICE_WAIT_SEC + 1):
             all_devices = self.sp.devices()["devices"]
             log("devices: " + ("; ".join(device_label(d) for d in all_devices) or "none"))
+            if not all_devices and attempt == 0:
+                log("no devices; starting the Spotify app on this PC")
+                self._launch_app()
             devices = [d for d in all_devices if not d.get("is_restricted")]
             if devices:
                 chosen = (next((d for d in devices if d.get("is_active")), None)

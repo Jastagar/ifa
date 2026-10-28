@@ -36,6 +36,11 @@ TOOL_CALL_RETRY = (
     "with simple, valid JSON arguments: plain strings and numbers, no extra text.]"
 )
 TOOL_RESULT_MARKER = "TOOL_RESULT_"
+TEXT_TOOL_CALL = re.compile(r"<tool_call>|<function=")
+NO_MORE_TOOLS = (
+    "[Ifa system note, not from the user: no more tools can be called this turn. Tell Sir in one "
+    "short sentence what happened, using the tool results above.]"
+)
 FABRICATION_CORRECTION = (
     "[Ifa system note, not from the user: you wrote a tool result yourself. Tool "
     "results only come from real tool calls. Call the tool instead of imitating it.]"
@@ -126,6 +131,7 @@ def _stream_assistant_message(
 ) -> tuple[dict, list[str]]:
     full_text = ""
     fabricated = False
+    leaked = False
     claimed = False
     first_checked = not guard_claims
     sentence_buffer = ""
@@ -152,6 +158,10 @@ def _stream_assistant_message(
         if fabricated or TOOL_RESULT_MARKER in full_text:
             fabricated = True
             continue
+        # A tool call written as plain text (e.g. when tools are off) must never be spoken.
+        if leaked or TEXT_TOOL_CALL.search(full_text):
+            leaked = True
+            continue
         if claimed:
             continue
         sentence_buffer += content
@@ -172,13 +182,13 @@ def _stream_assistant_message(
     tail = sentence_buffer.strip()
     if tail and not first_checked and ACTION_CLAIM.search(tail):
         claimed = True
-    if tail and not fabricated and not claimed:
+    if tail and not fabricated and not leaked and not claimed:
         speech_parts.append(tail)
 
     timer.record_llm("llm", started_ms, first_chunk_ms, final_chunk, len(tool_calls))
     return (
         {"role": "assistant", "content": full_text, "tool_calls": tool_calls,
-         "fabricated": fabricated, "claimed": claimed and not tool_calls},
+         "fabricated": fabricated, "leaked": leaked and not tool_calls, "claimed": claimed and not tool_calls},
         speech_parts,
     )
 
@@ -253,6 +263,17 @@ def agent_turn_stream(
             return fallback
 
         claimed = assistant_msg.pop("claimed")
+        if assistant_msg.pop("leaked"):
+            print(f"[agent] reply was a tool call written as text: {assistant_msg['content'][:80]!r}")
+            if retries_remaining:
+                retries_remaining -= 1
+                messages.append({"role": "user", "content": NO_MORE_TOOLS if not allow_tools else TOOL_CALL_RETRY})
+                continue
+            fallback = "I couldn't finish that one."
+            if on_sentence:
+                on_sentence(fallback)
+            memory.add_turn(user_text, steps, fallback)
+            return fallback
         if assistant_msg.pop("fabricated"):
             if not retries_remaining:
                 return "I couldn't figure out how to do that."
