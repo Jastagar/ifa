@@ -29,7 +29,7 @@ def redact(text: str, secrets: list[str]) -> str:
     return text
 
 
-def build_report(log_text: str, checks: dict, setup: dict, secrets: list[str]) -> str:
+def build_report(log_text: str, checks: dict, setup: dict, secrets: list[str], max_chars: int = MAX_CHARS) -> str:
     steps = "\n".join(
         f"  {'done   ' if s.get('done') else 'blocked' if s.get('blocked') else 'todo   '} {s['label']}"
         + (f"  ({s['blocked']})" if s.get("blocked") else "")
@@ -42,7 +42,7 @@ def build_report(log_text: str, checks: dict, setup: dict, secrets: list[str]) -
         f"Setup steps:\n{steps}\n"
         f"{'=' * 70}\n"
     )
-    body = log_text[-MAX_CHARS:]
+    body = log_text[-max_chars:]
     return redact(header + body + "\n", secrets)
 
 

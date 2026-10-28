@@ -114,7 +114,7 @@ def describe(track: dict) -> str:
     return f"{track['name']} by {artists}" + (f" ({extra})" if extra else "") + (f" [{variant} version]" if variant else "")
 
 
-VERIFY_POLL_SEC = 0.5
+VERIFY_POLL_SEC = 1.0
 VERIFY_TIMEOUT_SEC = 5.0
 APP_START_WAIT_SEC = 12
 
@@ -255,12 +255,6 @@ class SpotifySkill:
             self._launch_app()
             device = self._wait_for_this_computer() or device
             log(f"start_playback on {device_label(device)} uris={uris}")
-            self.sp.start_playback(device_id=device["id"], uris=uris)
-            playing = self._verify(track)
-        if playing is None:
-            log(f"still nothing; transfer playback to {device_label(device)} and retry")
-            self.sp.transfer_playback(device_id=device["id"], force_play=True)
-            self._sleep(1.0)
             self.sp.start_playback(device_id=device["id"], uris=uris)
             playing = self._verify(track)
         if playing is None:

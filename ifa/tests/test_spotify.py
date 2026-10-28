@@ -83,13 +83,13 @@ class SpotifySkillTests(unittest.TestCase):
         self.assertIn("isn't open on any device", str(cm.exception))
         self.assertEqual(len(self.sleeps), DEVICE_WAIT_SEC)
 
-    def test_accepted_but_not_playing_retries_once_then_says_so(self):
+    def test_accepted_but_not_playing_says_so_without_retry_storms(self):
         self.sp.current_playback.return_value = {"is_playing": False, "item": None, "device": {"name": "PC"}}
         with self.assertRaises(SpotifyError) as cm:
             self.skill.play("tum hi ho")
         self.assertIn("nothing is playing", str(cm.exception))
-        self.sp.transfer_playback.assert_called_once_with(device_id="pc", force_play=True)
-        self.assertEqual(self.sp.start_playback.call_count, 2)
+        self.sp.transfer_playback.assert_not_called()
+        self.assertEqual(self.sp.start_playback.call_count, 1)
 
     def test_on_this_pc_it_starts_the_app_and_plays_again(self):
         from unittest.mock import patch
@@ -97,7 +97,7 @@ class SpotifySkillTests(unittest.TestCase):
         host = socket.gethostname().split(".")[0]
         pc = {"id": "me", "name": host, "type": "Computer", "is_active": True}
         self.sp.devices.return_value = {"devices": [pc]}
-        states = iter([{"is_playing": False}] * 10 + [{"is_playing": True, "item": TRACK, "device": {"name": host}}] * 20)
+        states = iter([{"is_playing": False}] * 5 + [{"is_playing": True, "item": TRACK, "device": {"name": host}}] * 20)
         self.sp.current_playback.side_effect = lambda: next(states)
         with patch.object(SpotifySkill, "_launch_app") as launch:
             self.assertEqual(self.skill.play("tum hi ho"), f"Playing Tum Hi Ho by Arijit Singh on {host}.")

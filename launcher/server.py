@@ -181,7 +181,13 @@ class Launcher:
         secrets_found.append(str((checks.get("phone") or {}).get("pairing_code") or ""))
         report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found)
         try:
-            url = upload(report)
+            try:
+                url = upload(report)
+            except OSError as exc:
+                # paste.rs sometimes rejects a big report; the newest lines matter most, so retry with fewer.
+                self.log.append(f"[launcher] Send logs: {exc}; retrying with the last {RETRY_CHARS:,} characters")
+                report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found, RETRY_CHARS)
+                url = upload(report)
         except Exception as exc:
             # Keep the redacted report on disk so a failed upload never loses the logs.
             saved = self.repo_root / "logs" / f"shared-{time.strftime('%Y%m%d-%H%M%S')}.txt"
@@ -207,6 +213,9 @@ class Launcher:
         managed = set(BY_KEY) | set(env_file.read_env(self.env_path))
         self.agent.start(clear_env=managed)
         return self.agent.status()
+
+
+RETRY_CHARS = 150_000
 
 
 class ShareError(OSError):
