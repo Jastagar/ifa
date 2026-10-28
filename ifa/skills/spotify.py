@@ -241,6 +241,12 @@ class SpotifySkill:
 
     def _start(self, device: dict, track: dict | None, done: str) -> str:
         uris = [track["uri"]] if track else None
+        if not device.get("is_active"):
+            # Playing straight onto an idle desktop app can leave its controls blank:
+            # make it the active device first, then send play once.
+            log(f"transfer playback to {device_label(device)} first (it isn't the active device)")
+            self.sp.transfer_playback(device_id=device["id"], force_play=False)
+            self._sleep(1.0)
         log(f"start_playback on {device_label(device)} uris={uris}")
         self.sp.start_playback(device_id=device["id"], uris=uris)
         playing = self._verify(track)

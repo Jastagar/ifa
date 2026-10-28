@@ -110,6 +110,7 @@ class SpotifySkillTests(unittest.TestCase):
                                                     {"id": "pc", "type": "Computer", "is_active": False}]}
         self.skill.play("tum hi ho")
         self.assertEqual(self.sp.start_playback.call_args.kwargs["device_id"], "pc")
+        self.sp.transfer_playback.assert_called_once_with(device_id="pc", force_play=False)
 
     def test_api_errors_become_sentences(self):
         self.sp.pause_playback.side_effect = SpotifyException(403, -1, "Player command failed", reason="PREMIUM_REQUIRED")
