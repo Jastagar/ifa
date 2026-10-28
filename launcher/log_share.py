@@ -51,6 +51,10 @@ def upload(text: str, url: str = PASTE_URL, timeout: float = 30) -> str:
                                      headers={"Content-Type": "text/plain; charset=utf-8", "User-Agent": "ifa-launcher"})
     try:
         response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()[:200]
+        raise OSError(f"the paste service answered HTTP {exc.code} for {len(text):,} characters"
+                      + (f": {detail}" if detail else "")) from exc
     except urllib.error.URLError as exc:
         if not isinstance(getattr(exc, "reason", None), ssl.SSLError):
             raise

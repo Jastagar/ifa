@@ -6,6 +6,8 @@ import re
 import secrets
 import sys
 import threading
+import time
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -178,7 +180,14 @@ class Launcher:
         # The pairing code may come from .phone_token rather than .env, so add it explicitly.
         secrets_found.append(str((checks.get("phone") or {}).get("pairing_code") or ""))
         report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found)
-        url = upload(report)
+        try:
+            url = upload(report)
+        except Exception as exc:
+            # Keep the redacted report on disk so a failed upload never loses the logs.
+            saved = self.repo_root / "logs" / f"shared-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_text(report, encoding="utf-8")
+            raise ShareError(f"{exc}. The report was saved to {saved}") from exc
         return {"url": url, "id": url.rstrip("/").rsplit("/", 1)[-1], "lines": report.count("\n")}
 
     def phone_info(self, values: dict) -> dict:
@@ -198,6 +207,10 @@ class Launcher:
         managed = set(BY_KEY) | set(env_file.read_env(self.env_path))
         self.agent.start(clear_env=managed)
         return self.agent.status()
+
+
+class ShareError(OSError):
+    pass
 
 
 class SettingsError(ValueError):
@@ -300,8 +313,12 @@ def make_handler(launcher: Launcher, token: str, port: int):
                 elif path == "/api/logs/share":
                     try:
                         self._json(HTTPStatus.OK, launcher.share_logs())
-                    except OSError as exc:
+                    except ShareError as exc:
                         self._json(HTTPStatus.BAD_GATEWAY, {"error": f"upload failed: {exc}"})
+                    except Exception as exc:
+                        launcher.log.append(f"[launcher] Send logs failed:\n{traceback.format_exc()}")
+                        self._json(HTTPStatus.INTERNAL_SERVER_ERROR,
+                                   {"error": f"couldn't build the report ({type(exc).__name__}: {exc}); details in the console"})
                 elif path == "/api/setup/stop":
                     launcher.setup.stop()
                     self._json(HTTPStatus.OK, launcher.setup.status())
