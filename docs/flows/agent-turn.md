@@ -89,7 +89,7 @@ Ollama also gets `tools` (all registered schemas) while hops remain, plus `think
 
 ## Tool catalogue
 
-Registered by `register_all` in [tools/__init__.py](../../ifa/tools/__init__.py). 18 tools in total.
+Registered by `register_all` in [tools/__init__.py](../../ifa/tools/__init__.py). 19 tools in total.
 
 | Tool | Purpose | File | Terminal | Gating |
 |------|---------|------|----------|--------|
@@ -102,6 +102,7 @@ Registered by `register_all` in [tools/__init__.py](../../ifa/tools/__init__.py)
 | `switch_mode` | Change vibe (GAMING / NORMAL), which changes the system prompt | [vibe.py](../../ifa/tools/vibe.py) | no | none |
 | `open_app` | Open a built-in or launcher-defined custom app | [system.py](../../ifa/tools/system.py) | no | Built by `build_tool`; app list read once at startup |
 | `open_website` | Open YouTube, Google or a URL, optionally private | [browser.py](../../ifa/tools/browser.py) | no | none |
+| `search_web` | Search the internet (ddgs web results, Wikipedia fallback) and return titles, sites and snippets | [websearch.py](../../ifa/tools/websearch.py) | no | Needs internet; ~4 s; results are untrusted data |
 | `spotify_control` | Search, play, pause, next, now playing | [spotify.py](../../ifa/tools/spotify.py) | no | none |
 | `whats_app` | Send a WhatsApp message to a known contact | [whatsApp.py](../../ifa/tools/whatsApp.py) | no | Contact must be in `CONTACTS`; needs internet |
 | `analyze_screen` | Screenshot plus a vision `chat` call | [vision.py](../../ifa/tools/vision.py) | no | Uses the same `IFA_OLLAMA_MODEL` |

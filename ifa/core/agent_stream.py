@@ -1,4 +1,5 @@
 import re
+import time
 import uuid
 
 import httpx
@@ -115,11 +116,17 @@ def _notification_hint(ctx: AgentContext) -> str:
     )
 
 
+def _date_note() -> str:
+    # Next to the user's words, not in the system prompt: there the model ignored it and searched
+    # "IPL 2024 winner" for "this year". Not stored in memory, so it costs ~12 tokens per turn.
+    return f"[Today is {time.strftime('%A, %d %B %Y')}.]\n"
+
+
 def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce, ctx.db_path)},
         *memory.recent(),
-        {"role": "user", "content": _notification_hint(ctx) + user_text},
+        {"role": "user", "content": _date_note() + _notification_hint(ctx) + user_text},
     ]
 
 
