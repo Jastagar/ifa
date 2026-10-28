@@ -32,3 +32,4 @@ google_credentials.json
 /venv-voice/
 /voice_server/
 /logs/
+.launcher_key

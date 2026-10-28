@@ -15,6 +15,7 @@ The easiest way to configure and run Ifa:
 
 - **macOS**: double-click `run-launcher.command`
 - **Windows**: double-click `run-launcher.bat`
+- **From another device on your network**: use `run-launcher-lan.bat` (or `--lan`). It prints a link with an access key and opens Ollama on the network too.
 - or: `python -m launcher` (add `--port 8790` / `--no-browser`)
 
 It opens a local page where you can:

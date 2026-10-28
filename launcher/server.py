@@ -9,6 +9,7 @@ import threading
 import time
 import traceback
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -228,16 +229,20 @@ class SettingsError(ValueError):
         self.errors = errors
 
 
-def make_handler(launcher: Launcher, token: str, port: int):
+def make_handler(launcher: Launcher, token: str, port: int, lan_key: str | None = None, lan_host: str | None = None):
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if lan_key and lan_host:
+        allowed_hosts.add(f"{lan_host}:{port}")
     page = (STATIC / "index.html").read_text(encoding="utf-8")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args) -> None:
             pass
 
-        def _send(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
+        def _send(self, status: HTTPStatus, body: bytes, content_type: str, cookie: str = "") -> None:
             self.send_response(status)
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
@@ -249,9 +254,21 @@ def make_handler(launcher: Launcher, token: str, port: int):
         def _json(self, status: HTTPStatus, data: dict) -> None:
             self._send(status, json.dumps(data).encode("utf-8"), "application/json; charset=utf-8")
 
+        def _lan_key_ok(self) -> bool:
+            # Other devices on the network need the access key once (?key=...); a cookie keeps it after that.
+            if not lan_key or self.client_address[0] in ("127.0.0.1", "::1"):
+                return True
+            url = urlparse(self.path)
+            given = (parse_qs(url.query).get("key") or [""])[0]
+            cookie = SimpleCookie(self.headers.get("Cookie", "")).get("ifa_key")
+            return hmac.compare_digest(given, lan_key) or bool(cookie and hmac.compare_digest(cookie.value, lan_key))
+
         def _guard(self) -> bool:
             if self.headers.get("Host") not in allowed_hosts:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "bad host"})
+                return False
+            if not self._lan_key_ok():
+                self._json(HTTPStatus.FORBIDDEN, {"error": "open the launcher with the access key shown in its console"})
                 return False
             path = urlparse(self.path).path
             if path.startswith("/api/") and not hmac.compare_digest(
@@ -276,7 +293,8 @@ def make_handler(launcher: Launcher, token: str, port: int):
             url = urlparse(self.path)
             if url.path == "/":
                 html = page.replace("__LAUNCHER_TOKEN__", token)
-                self._send(HTTPStatus.OK, html.encode("utf-8"), "text/html; charset=utf-8")
+                cookie = f"ifa_key={lan_key}; HttpOnly; SameSite=Strict; Path=/" if lan_key else ""
+                self._send(HTTPStatus.OK, html.encode("utf-8"), "text/html; charset=utf-8", cookie)
             elif url.path == "/api/settings":
                 self._json(HTTPStatus.OK, launcher.settings())
             elif url.path == "/api/checks":
@@ -344,8 +362,10 @@ def make_handler(launcher: Launcher, token: str, port: int):
     return Handler
 
 
-def serve(launcher: Launcher, port: int, token: str | None = None) -> tuple[ThreadingHTTPServer, str]:
+def serve(launcher: Launcher, port: int, token: str | None = None,
+          lan_key: str | None = None, lan_host: str | None = None) -> tuple[ThreadingHTTPServer, str]:
+    """Serve on this PC only, or on the whole network when a LAN access key is given."""
     token = token or secrets.token_urlsafe(24)
-    server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
-    server.RequestHandlerClass = make_handler(launcher, token, server.server_address[1])
+    server = ThreadingHTTPServer(("0.0.0.0" if lan_key else "127.0.0.1", port), BaseHTTPRequestHandler)
+    server.RequestHandlerClass = make_handler(launcher, token, server.server_address[1], lan_key, lan_host)
     return server, token

@@ -44,7 +44,7 @@ sequenceDiagram
 
 | # | Step | Where (file → function) | Notes |
 |---|------|-------------------------|-------|
-| 1 | User runs `run-launcher.bat` / `run-launcher.command`, or `python -m launcher` | [run-launcher.command](../../run-launcher.command), [__main__.py](../../launcher/__main__.py) → `main` | Uses `venv` Python if it exists, else system Python. Flags: `--port` (default 8790), `--no-browser`. |
+| 1 | User runs `run-launcher.bat` / `run-launcher.command`, or `python -m launcher` | [run-launcher.command](../../run-launcher.command), [__main__.py](../../launcher/__main__.py) → `main` | Uses `venv` Python if it exists, else system Python. Flags: `--port` (default 8790), `--no-browser`, `--lan` (listen on the network: other devices need `?key=` from `.launcher_key` once, then a cookie; also starts Ollama on `0.0.0.0` if it isn't running). `run-launcher-lan.bat` passes `--lan`. |
 | 2 | Build the app object | [server.py](../../launcher/server.py) → `Launcher.__init__` | One shared `LogBuffer` (writes to `logs/`). Two `AgentProcess` objects: the agent (`<venv python> -u -m ifa.main`) and a `setup` runner. |
 | 3 | Bind and make a token | [server.py](../../launcher/server.py) → `serve` | `ThreadingHTTPServer(("127.0.0.1", port))`. Token is `secrets.token_urlsafe(24)`, new every launch. |
 | 4 | Open the browser | [__main__.py](../../launcher/__main__.py) → `main` | `webbrowser.open` after 0.5 s. On Ctrl-C it calls `launcher.agent.stop()`. |
