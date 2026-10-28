@@ -171,8 +171,9 @@ class Launcher:
             "phone": self.phone_info(values),
         }
 
-    def share_logs(self) -> dict:
-        from launcher.log_share import build_report, upload
+    def log_report(self, max_chars: int | None = None) -> str:
+        """The logs with every secret removed: what Send logs uploads, and what /api/logs/report serves."""
+        from launcher.log_share import MAX_CHARS, build_report
 
         values = env_file.read_env(self.env_path)
         secret_keys = [s.key for s in SETTINGS if s.secret] + [k for k in values if k not in BY_KEY]
@@ -180,14 +181,19 @@ class Launcher:
         secrets_found = [values[k] for k in secret_keys if values.get(k)]
         # The pairing code may come from .phone_token rather than .env, so add it explicitly.
         secrets_found.append(str((checks.get("phone") or {}).get("pairing_code") or ""))
-        report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found)
+        return build_report(self.log.text(), checks, self.setup_steps(), secrets_found, max_chars or MAX_CHARS)
+
+    def share_logs(self) -> dict:
+        from launcher.log_share import upload
+
+        report = self.log_report()
         try:
             try:
                 url = upload(report)
             except OSError as exc:
                 # paste.rs sometimes rejects a big report; the newest lines matter most, so retry with fewer.
                 self.log.append(f"[launcher] Send logs: {exc}; retrying with the last {RETRY_CHARS:,} characters")
-                report = build_report(self.log.text(), checks, self.setup_steps(), secrets_found, RETRY_CHARS)
+                report = self.log_report(RETRY_CHARS)
                 url = upload(report)
         except Exception as exc:
             # Keep the redacted report on disk so a failed upload never loses the logs.
@@ -309,6 +315,8 @@ def make_handler(launcher: Launcher, token: str, port: int, lan_key: str | None 
                 self._json(HTTPStatus.OK, launcher.memories())
             elif url.path == "/api/setup":
                 self._json(HTTPStatus.OK, launcher.setup_steps())
+            elif url.path == "/api/logs/report":
+                self._send(HTTPStatus.OK, launcher.log_report().encode("utf-8"), "text/plain; charset=utf-8")
             elif url.path == "/api/logs":
                 after = int((parse_qs(url.query).get("after") or ["0"])[0])
                 lines, last = launcher.log.after(after)
