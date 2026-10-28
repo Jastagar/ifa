@@ -61,8 +61,11 @@ def explain(exc: Exception) -> str:
             return "The Spotify login has expired. " + LOGIN_HINT
         if reason == "PREMIUM_REQUIRED" or exc.http_status == 403:
             return "Spotify only allows playback control on Premium accounts."
-        if reason == "NO_ACTIVE_DEVICE" or exc.http_status == 404:
+        if reason == "NO_ACTIVE_DEVICE":
             return "Spotify isn't open on any device. Open the Spotify app and try again."
+        if exc.http_status == 404:
+            return ("Spotify lists the device but can't reach it. Fully quit the Spotify app "
+                    "(tray icon, Quit), open it again, and retry.")
         if exc.http_status == 429:
             return "Spotify is rate limiting requests. Try again in a minute."
         return f"Spotify returned an error ({exc.http_status}): {exc.msg}"

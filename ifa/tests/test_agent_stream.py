@@ -82,6 +82,15 @@ class DirectResponseTests(AgentLoopTestCase):
         self.assertIsNotNone(llm.requests[0]["tools"])
 
 
+class TextToolCallTests(AgentLoopTestCase):
+    def test_tool_call_written_as_text_is_never_spoken(self):
+        spoken = []
+        llm = ScriptedLLM(_text("<tool_call>\n<function=spotify_control>\n</function>\n</tool_call>"),
+                          _text("Spotify couldn't play it."))
+        self.assertEqual(self.run_turn(llm, spoken=spoken), "Spotify couldn't play it.")
+        self.assertEqual(spoken, ["Spotify couldn't play it."])
+
+
 class MultiHopTests(AgentLoopTestCase):
     def test_second_tool_call_sees_first_tool_result(self):
         order = []
