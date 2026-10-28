@@ -72,7 +72,10 @@ class SpotifySkillTests(unittest.TestCase):
 
     def test_waits_for_a_device_that_is_still_starting(self):
         self.sp.devices.side_effect = [{"devices": []}, {"devices": []}, {"devices": [device("pc")]}]
-        self.skill.play("x")
+        from unittest.mock import patch
+        with patch.object(SpotifySkill, "_launch_app") as launch:
+            self.skill.play("x")
+        launch.assert_called_once()
         self.assertEqual(self.sleeps[:2], [1, 1])
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["spotify:track:1"])
 
