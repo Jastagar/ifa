@@ -245,19 +245,28 @@ class SpotifySkill:
         artists = ", ".join(a["name"] for a in track.get("artists", [])[:2])
         return self._start(self._device(), track, f"Playing {track['name']}" + (f" by {artists}" if artists else ""))
 
-    def _start(self, device: dict, track: dict | None, done: str) -> str:
-        uris = [track["uri"]] if track else None
+    def _play_on(self, device: dict, track: dict | None) -> None:
         # One call: play with device_id also makes that device active. A separate transfer right before it
         # made the desktop app drop off Spotify (the next play got 404 "Not found").
-        log(f"start_playback on {device_label(device)} uris={uris}")
-        self.sp.start_playback(device_id=device["id"], uris=uris)
+        album = ((track or {}).get("album") or {}).get("uri")
+        if album:
+            # A bare {"uris": [track]} is accepted (204) but loads nothing: the app becomes active with no
+            # item and every action disallowed. Playing the track's album from that track works.
+            log(f"start_playback on {device_label(device)} album={album} from {track['uri']}")
+            self.sp.start_playback(device_id=device["id"], context_uri=album, offset={"uri": track["uri"]})
+        else:
+            uris = [track["uri"]] if track else None
+            log(f"start_playback on {device_label(device)} uris={uris}")
+            self.sp.start_playback(device_id=device["id"], uris=uris)
+
+    def _start(self, device: dict, track: dict | None, done: str) -> str:
+        self._play_on(device, track)
         playing = self._verify(track)
         if playing is None and is_this_computer(device):
             log("nothing is playing; starting the Spotify app on this PC")
             self._launch_app()
             device = self._wait_for_this_computer() or device
-            log(f"start_playback on {device_label(device)} uris={uris}")
-            self.sp.start_playback(device_id=device["id"], uris=uris)
+            self._play_on(device, track)
             playing = self._verify(track)
         if playing is None:
             raise SpotifyError(
@@ -272,7 +281,9 @@ class SpotifySkill:
             waited += VERIFY_POLL_SEC
             playback = self.sp.current_playback() or {}
             item = playback.get("item") or {}
-            ok = playback.get("is_playing") and (track is None or item.get("uri") == track["uri"])
+            # Spotify may play a relinked copy (another uri) of the same song, so a matching name counts too.
+            ok = playback.get("is_playing") and (track is None or item.get("uri") == track["uri"]
+                                                 or (item.get("name") and item.get("name") == track.get("name")))
             if ok or waited >= timeout:
                 log(f"check after {waited:.1f}s: is_playing={playback.get('is_playing')} "
                     f"device={device_label(playback.get('device'))} track={item.get('name')!r}")
@@ -408,6 +419,12 @@ def doctor() -> int:
         print(f"[doctor] {label}: still not playing after 5 s; last /me/player -> HTTP {r.status_code} {r.text.strip()[:400]}")
         return False
 
+    album = ((items[0].get("album") or {}).get("uri")) if items else None
+    if album:
+        call("PUT", "/me/player/play", params={"device_id": target["id"]},
+             json={"context_uri": album, "offset": {"uri": uri}})
+        if watch("play the song inside its album (what Ifa does)"):
+            return 0
     call("PUT", "/me/player/play", params={"device_id": target["id"]}, json={"uris": [uri]})
     if watch("play with device_id"):
         return 0

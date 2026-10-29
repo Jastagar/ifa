@@ -19,7 +19,8 @@ def report_what_was_started(sp):
         explicit = sp.current_playback.return_value
         if explicit is None or isinstance(explicit, dict):
             return explicit
-        uris = (sp.start_playback.call_args.kwargs.get("uris") if sp.start_playback.call_args else None) or ["x"]
+        kwargs = sp.start_playback.call_args.kwargs if sp.start_playback.call_args else {}
+        uris = kwargs.get("uris") or ([kwargs["offset"]["uri"]] if kwargs.get("offset") else None) or ["x"]
         return {"is_playing": True, "item": {"uri": uris[0], "name": "x"}, "device": {"name": "PC"}}
     sp.current_playback.side_effect = current
 
@@ -38,6 +39,12 @@ class SpotifySkillTests(unittest.TestCase):
     def test_plays_the_top_result_on_the_active_device(self):
         self.assertEqual(self.skill.play("tum hi ho"), "Playing Tum Hi Ho by Arijit Singh on PC.")
         self.sp.start_playback.assert_called_once_with(device_id="pc", uris=["spotify:track:1"])
+
+    def test_plays_the_song_inside_its_album(self):
+        self.sp.search.return_value = {"tracks": {"items": [{**TRACK, "album": {"name": "Aashiqui 2", "uri": "spotify:album:9"}}]}}
+        self.skill.play("tum hi ho")
+        self.sp.start_playback.assert_called_once_with(device_id="pc", context_uri="spotify:album:9",
+                                                       offset={"uri": "spotify:track:1"})
 
     def test_pause_says_what_it_paused(self):
         self.sp.current_playback.return_value = {"is_playing": True, "item": TRACK}
