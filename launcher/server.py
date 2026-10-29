@@ -274,7 +274,11 @@ def make_handler(launcher: Launcher, token: str, port: int, lan_key: str | None 
             return hmac.compare_digest(given, lan_key) or bool(cookie and hmac.compare_digest(cookie.value, lan_key))
 
         def _guard(self) -> bool:
-            if self.headers.get("Host") not in allowed_hosts:
+            # Other machines in --lan mode must show the access key, which is the real protection, so any
+            # address of this PC works (it may have several: Wi-Fi, VPN, WSL). Requests from this PC skip the
+            # key, so they keep the exact Host check that stops DNS-rebinding pages.
+            remote = self.client_address[0] not in ("127.0.0.1", "::1")
+            if self.headers.get("Host") not in allowed_hosts and not (lan_key and remote):
                 self._json(HTTPStatus.FORBIDDEN, {"error": "bad host"})
                 return False
             if not self._lan_key_ok():
