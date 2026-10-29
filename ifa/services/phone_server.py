@@ -19,6 +19,7 @@ DISCOVERY_PROBE = b"IFA_DISCOVER_V1"
 SAMPLE_RATE = 16_000
 CAPTURE_SAMPLES = 512
 AUDIO_FRAME_SAMPLES = 4800
+HEARTBEAT_SEC = 30
 AUDIO_STALL_SEC = 5.0
 MIN_VOICE_SAMPLES = SAMPLE_RATE * 3 // 10
 MIN_VOICE_PEAK = 0.01
@@ -657,6 +658,7 @@ class PhoneServer:
             self._ready.set()
             return
         self._ready.set()
+        loop.create_task(_watch_loop_lag())
         loop.run_forever()
 
     async def _health(self, request):
@@ -679,7 +681,9 @@ class PhoneServer:
             )
             return web.json_response({"error": "wrong pairing code"}, status=401)
 
-        ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
+        # Ifa pings every 30 s and waits 15 s for the pong. Phones in Wi-Fi power saving (screen off) can hold
+        # packets for several seconds, and the old 7.5 s wait dropped healthy connections.
+        ws = web.WebSocketResponse(heartbeat=HEARTBEAT_SEC, max_msg_size=1 << 20)
         await ws.prepare(request)
         session = PhoneSession(self, asyncio.get_running_loop(), peer)
         writer = asyncio.create_task(session.run_writer(ws))
@@ -746,6 +750,18 @@ class PhoneServer:
             except OSError as exc:
                 print(f"[phone] discovery error: {exc}")
                 time.sleep(1)
+
+
+async def _watch_loop_lag(every: float = 1.0, warn_after: float = 2.0) -> None:
+    # Pongs are only sent while this loop runs. If it ever stalls, say so: that would make Ifa, not the
+    # phone or Wi-Fi, the reason for "didn't receive pong" disconnects.
+    loop = asyncio.get_running_loop()
+    while True:
+        started = loop.time()
+        await asyncio.sleep(every)
+        late = loop.time() - started - every
+        if late > warn_after:
+            print(f"[phone] the phone connection loop stalled for {late:.1f}s (pongs were delayed)")
 
 
 def _quiet_connection_errors(loop, context: dict) -> None:
