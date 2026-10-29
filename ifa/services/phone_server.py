@@ -644,6 +644,7 @@ class PhoneServer:
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        loop.set_exception_handler(_quiet_connection_errors)
         app = web.Application()
         app.router.add_get("/phone/health", self._health)
         app.router.add_get("/phone", self._websocket)
@@ -687,6 +688,7 @@ class PhoneServer:
         with self._sessions_lock:
             first = not self._sessions
             self._sessions.append(session)
+        connected_at = time.monotonic()
         print(f"[phone] connected: {peer}" + (" (PC mic paused while the phone is connected)" if self.priority else ""))
         away = None if self._last_disconnect is None else time.monotonic() - self._last_disconnect
         if self.greeting and first and (away is None or away >= self.greet_after_sec):
@@ -717,7 +719,11 @@ class PhoneServer:
                 await asyncio.wait_for(writer, timeout=1)
             except (asyncio.TimeoutError, Exception):
                 writer.cancel()
-            print(f"[phone] disconnected: {peer}")
+            # Who ended it matters: a close code means a clean goodbye; 1006 or a network error means the
+            # phone vanished (Wi-Fi drop, app killed, or the phone's 10 s ping got no answer).
+            error = ws.exception()
+            print(f"[phone] disconnected: {peer} after {time.monotonic() - connected_at:.0f}s "
+                  f"(close code {ws.close_code}" + (f", {type(error).__name__}: {error}" if error else "") + ")")
         return ws
 
     def _bind_discovery(self) -> socket.socket | None:
@@ -740,6 +746,14 @@ class PhoneServer:
             except OSError as exc:
                 print(f"[phone] discovery error: {exc}")
                 time.sleep(1)
+
+
+def _quiet_connection_errors(loop, context: dict) -> None:
+    # A phone vanishing mid-send leaves an unread "Connection lost" future (a long Windows traceback).
+    # The disconnect line already reports it, so skip those and log everything else as usual.
+    if isinstance(context.get("exception"), ConnectionError):
+        return
+    loop.default_exception_handler(context)
 
 
 def greeting_text() -> str:

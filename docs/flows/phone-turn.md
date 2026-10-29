@@ -108,6 +108,7 @@ sequenceDiagram
 | Heard but empty | `[phone] no speech: speech-to-text found no words in …` | Whisper returned nothing | `IFA_WHISPER_MODEL`, `IFA_WHISPER_PROMPT`; dump with `IFA_VOICE_DEBUG_WAV` |
 | "Ifa is still finishing the last reply" in app | (PC sends `error` `busy`) | `start`/`text` while a turn or nudge is in flight | Wait for `turn_end` |
 | Error reply on phone | `[phone] turn failed: …` | Exception in the agent turn | See [Agent turn](agent-turn.md) |
+| Phone keeps dropping | `[phone] disconnected: <ip> after Ns (close code C…)` | Code 1000/1001: the app closed it (reconnect button, app stopped). Code 1006 or an error: the phone vanished: Wi-Fi drop or power saving, the app killed in the background, or its 10 s ping got no answer | Check the app's Logs tab for `Ifa disconnected: <reason>` |
 | Reply finishes on the PC speakers | `[phone] disconnected: <ip>` mid-reply | `PhoneTTS._sink` returns no sink once the session is closed, so `TTSService` plays locally | Expected fallback |
 | Urgent nudge silent | `[phone] couldn't play the announcement: …` | TTS error | Check TTS logs |
 | No greeting | `[phone] couldn't play the greeting: …` / `… on the PC: …` | TTS error, or reconnect sooner than `IFA_PHONE_GREETING_AFTER_MIN` | Set the minutes to 0 or blank `IFA_PHONE_GREETING` |
