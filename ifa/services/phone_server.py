@@ -12,6 +12,7 @@ from typing import Callable
 import numpy as np
 
 from ifa.services.notifications import URGENT_ANNOUNCEMENT, parse_settings
+from ifa.services import transcripts
 from ifa.services.pairing import lan_address, load_pairing_code
 
 PROTOCOL_VERSION = 1
@@ -344,7 +345,8 @@ class PhoneSession:
             print(f"[phone] {verdict.describe(self.server.speaker.threshold)}")
 
         print("[phone] transcribing...")
-        text = (self.server.transcribe(normalize(audio)) or "").strip()
+        heard_audio = normalize(audio)
+        text = (self.server.transcribe(heard_audio) or "").strip()
         if self._cancelled or self.closed:
             self._no_speech("cancelled")
             return
@@ -352,6 +354,7 @@ class PhoneSession:
             self._no_speech(f"speech-to-text found no words in {len(audio) / SAMPLE_RATE:.1f}s of audio")
             return
         print(f"[phone] heard: {text!r}")
+        transcripts.record(heard_audio, text, "phone")
         self.send_json({"type": "transcript", "text": text})
         self.server.submit(text, self)
 

@@ -33,3 +33,5 @@ google_credentials.json
 /voice_server/
 /logs/
 .launcher_key
+# Recordings of your voice for speech-to-text training. Never commit.
+/stt_data/

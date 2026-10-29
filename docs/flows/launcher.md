@@ -147,6 +147,9 @@ All routes need a local `Host` header. `/api/*` also needs `X-Launcher-Token`.
 | GET | `/api/memory` | Memory kinds and all memory rows |
 | GET | `/api/setup` | Setup steps with command, done, blocked, plus runner status |
 | GET | `/api/logs?after=N` | New log lines after seq N, plus status |
+| GET | `/api/logs/report` | The redacted log report as text (what Send logs uploads) |
+| GET | `/api/transcripts?status=new\|reviewed\|all` | Saved transcriptions with counts (Transcripts tab) |
+| GET | `/api/transcripts/audio?id=N` | That clip as WAV |
 | POST | `/api/settings` | Validate and write `.env`; returns settings plus `restart_needed` |
 | POST | `/api/agent/start` | Start Ifa |
 | POST | `/api/agent/stop` | Stop Ifa |
@@ -157,6 +160,9 @@ All routes need a local `Host` header. `/api/*` also needs `X-Launcher-Token`.
 | POST | `/api/setup/run` | Run steps `{steps: [ids], only_missing}` |
 | POST | `/api/setup/stop` | Cancel setup and stop the current step |
 | POST | `/api/logs/share` | Build, redact and upload the report; returns `url`, `id`, `lines` |
+| POST | `/api/transcripts/review` | `{id, text}`: mark heard right (`ok`) or `fixed` |
+| POST | `/api/transcripts/delete` | `{id}`: drop the row and its WAV |
+| POST | `/api/transcripts/export` | Freeze reviewed clips into `stt_data/datasets/<time>/` (train/test, audiofolder) |
 
 ## Where it can fail
 

@@ -214,6 +214,10 @@ class Launcher:
         port = values.get("IFA_PHONE_PORT") or BY_KEY["IFA_PHONE_PORT"].default
         return {"enabled": True, "pairing_code": code, "address": lan_address(), "port": port}
 
+    def transcripts(self):
+        from ifa.services.transcripts import TranscriptStore
+        return TranscriptStore(self.db_path, self.repo_root / "stt_data")
+
     def start_agent(self) -> dict:
         if self.setup.status()["running"]:
             raise RuntimeError("wait for setup to finish before launching")
@@ -315,6 +319,20 @@ def make_handler(launcher: Launcher, token: str, port: int, lan_key: str | None 
                 self._json(HTTPStatus.OK, launcher.memories())
             elif url.path == "/api/setup":
                 self._json(HTTPStatus.OK, launcher.setup_steps())
+            elif url.path == "/api/transcripts":
+                query = parse_qs(url.query)
+                try:
+                    self._json(HTTPStatus.OK, launcher.transcripts().list(
+                        (query.get("status") or ["new"])[0], int((query.get("limit") or ["100"])[0]),
+                        int((query.get("offset") or ["0"])[0])))
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            elif url.path == "/api/transcripts/audio":
+                try:
+                    path = launcher.transcripts().audio_path(int((parse_qs(url.query).get("id") or ["0"])[0]))
+                    self._send(HTTPStatus.OK, path.read_bytes(), "audio/wav")
+                except (ValueError, OSError) as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": f"no audio: {exc}"})
             elif url.path == "/api/logs/report":
                 self._send(HTTPStatus.OK, launcher.log_report().encode("utf-8"), "text/plain; charset=utf-8")
             elif url.path == "/api/logs":
@@ -354,6 +372,13 @@ def make_handler(launcher: Launcher, token: str, port: int, lan_key: str | None 
                         launcher.log.append(f"[launcher] Send logs failed:\n{traceback.format_exc()}")
                         self._json(HTTPStatus.INTERNAL_SERVER_ERROR,
                                    {"error": f"couldn't build the report ({type(exc).__name__}: {exc}); details in the console"})
+                elif path == "/api/transcripts/review":
+                    self._json(HTTPStatus.OK, launcher.transcripts().review(int(body.get("id", 0)), str(body.get("text", ""))))
+                elif path == "/api/transcripts/delete":
+                    launcher.transcripts().delete(int(body.get("id", 0)))
+                    self._json(HTTPStatus.OK, {"ok": True})
+                elif path == "/api/transcripts/export":
+                    self._json(HTTPStatus.OK, launcher.transcripts().export())
                 elif path == "/api/setup/stop":
                     launcher.setup.stop()
                     self._json(HTTPStatus.OK, launcher.setup.status())

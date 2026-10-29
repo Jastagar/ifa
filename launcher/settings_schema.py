@@ -72,6 +72,9 @@ SETTINGS = (
             ("en", "hi")),
     Setting("IFA_WHISPER_PROMPT", "Words to recognise", "listening", "text", "",
             "Optional names Whisper should spell right, e.g. Ifa, Spotify, YouTube, Sherlock."),
+    Setting("IFA_STT_COLLECT", "Save clips for review", "listening", "bool", "1",
+            "Keep each clip Ifa transcribes (in stt_data/, never committed) for the Transcripts tab, "
+            "so you can correct them and train speech-to-text on your voice."),
     Setting("IFA_VAD_SILENCE_MS", "End-of-speech silence (ms)", "listening", "number", "1500",
             "Silence that ends your turn. Lower is faster but may cut you off.", minimum=100, maximum=10000),
     Setting("IFA_VAD_MAX_UTTERANCE_MS", "Max utterance (ms)", "listening", "number", "30000",

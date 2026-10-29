@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from ifa.services import transcripts
 from ifa.services.tts_service import TTSService
 from ifa.utils import latency
 
@@ -291,6 +292,7 @@ class VoiceInput(_InputMode):
                 print("[voice] (no speech detected / empty transcript)")
                 continue
             print(f"[voice] heard: {transcribedText!r}")
+            transcripts.record(audio, transcribedText, "pc")
             self._queue.put(transcribedText)
             needs_turn_wait = True
 

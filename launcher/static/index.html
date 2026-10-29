@@ -109,11 +109,28 @@ nav.groups a:hover { color: var(--text); }
   border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; overflow-x: auto; white-space: nowrap; }
 .step.active { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 8%, transparent)); }
 .setup-actions { margin-left: auto; display: flex; gap: 6px; text-transform: none; letter-spacing: 0; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { border-color: transparent; color: var(--muted); }
+.tabs button.active { border-color: var(--line); color: var(--text); font-weight: 600; }
+#transcripts-view { display: block; padding: 16px 20px 40px; max-width: 1100px; margin: 0 auto; }
+@media (max-width: 900px) { #transcripts-view { padding: 12px 16px 32px; } }
+.tx-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.tx-tools select { width: auto; }
+.tx-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 8px; padding: 10px 0;
+  border-bottom: 1px solid var(--line); align-items: center; }
+.tx-row .meta, .tx-row .heard { grid-column: 2 / -1; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.tx-row .err { grid-column: 2 / -1; color: var(--danger); font-size: 12px; }
+.tx-row.ok input { border-color: var(--ok); } .tx-row.fixed input { border-color: var(--warn); }
+@media (max-width: 560px) { .tx-row { grid-template-columns: auto minmax(0, 1fr); } .tx-row .acts { grid-column: 2; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Ifa</h1>
+  <nav class="tabs" aria-label="Views">
+    <button id="tab-control" class="small active" type="button">Control</button>
+    <button id="tab-transcripts" class="small" type="button">Transcripts</button>
+  </nav>
   <span id="status" class="pill"><i></i><b>…</b></span>
   <span class="spacer"></span>
   <span id="dirty" class="pill" hidden></span>
@@ -122,7 +139,7 @@ nav.groups a:hover { color: var(--text); }
   <button id="stop" class="danger" disabled>Stop</button>
 </header>
 <div id="banner" class="banner"></div>
-<main>
+<main id="control-view">
   <div class="col">
     <section class="card">
       <h2>Environment <button id="recheck" class="small count">Re-check</button></h2>
@@ -192,6 +209,28 @@ nav.groups a:hover { color: var(--text); }
     </section>
   </div>
 </main>
+<div id="transcripts-view" hidden>
+  <section class="card">
+    <h2>Transcripts <span class="count" id="tx-counts"></span></h2>
+    <div class="tx-tools">
+      <select id="tx-filter" aria-label="Show">
+        <option value="new">To review</option>
+        <option value="reviewed">Reviewed</option>
+        <option value="all">All</option>
+      </select>
+      <button id="tx-refresh" class="small" type="button">Refresh</button>
+      <span class="spacer"></span>
+      <button id="tx-export" class="small primary" type="button">Freeze dataset</button>
+    </div>
+    <div class="body">
+      <p class="hint">Everything Ifa heard, with the audio. Play a clip, fix the text, press Enter. Unchanged text counts as
+        heard right. Delete clips that aren't your voice or aren't speech. Freeze dataset copies every reviewed clip into
+        <code>stt_data/datasets/</code> (train and test) for fine-tuning speech-to-text on your voice.</p>
+      <div id="tx-list"></div>
+      <button id="tx-more" class="small" type="button" hidden>Load more</button>
+    </div>
+  </section>
+</div>
 <script>
 const TOKEN = "__LAUNCHER_TOKEN__";
 const $ = (id) => document.getElementById(id);
@@ -649,6 +688,113 @@ $("say").addEventListener("submit", async (ev) => {
 window.addEventListener("beforeunload", (ev) => {
   if (dirtyCount()) { ev.preventDefault(); ev.returnValue = ""; }
 });
+
+// region transcripts
+const tx = { items: [], status: "new", offset: 0, audio: null, urls: {} };
+
+function showView(name) {
+  const transcripts = name === "transcripts";
+  $("control-view").hidden = transcripts;
+  $("transcripts-view").hidden = !transcripts;
+  $("tab-control").classList.toggle("active", !transcripts);
+  $("tab-transcripts").classList.toggle("active", transcripts);
+  if (transcripts && !tx.loaded) loadTranscripts();
+  history.replaceState(null, "", transcripts ? "#transcripts" : "#");
+}
+
+async function playClip(id, button) {
+  try {
+    if (!tx.urls[id]) {
+      const res = await fetch(`/api/transcripts/audio?id=${id}`, { headers: { "X-Launcher-Token": TOKEN } });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      tx.urls[id] = URL.createObjectURL(await res.blob());
+    }
+    tx.audio?.pause();
+    tx.audio = new Audio(tx.urls[id]);
+    button.textContent = "■";
+    tx.audio.addEventListener("ended", () => (button.textContent = "▶"));
+    tx.audio.addEventListener("pause", () => (button.textContent = "▶"));
+    await tx.audio.play();
+  } catch (e) { banner("Couldn't play the clip: " + e.message, "error"); }
+}
+
+function renderTranscriptCounts(counts) {
+  $("tx-counts").textContent = `${counts.new} to review · ${counts.ok} heard right · ${counts.fixed} fixed`;
+}
+
+function transcriptRow(item) {
+  const row = el("div", { class: "tx-row " + (item.status === "new" ? "" : item.status), id: "tx-" + item.id });
+  const input = el("input", { type: "text", value: item.text || item.heard, autocomplete: "off", spellcheck: "false",
+    "aria-label": "What you said" });
+  const play = el("button", { class: "small", type: "button", title: "Play", onclick: () => playClip(item.id, play) }, "▶");
+  const save = el("button", { class: "small primary", type: "button" }, "");
+  const label = () => (save.textContent = input.value.trim() === item.heard ? "Correct ✓" : "Save fix");
+  label();
+  input.addEventListener("input", label);
+  const submit = async () => {
+    row.querySelector(".err")?.remove();
+    try {
+      const r = await api("/api/transcripts/review", { id: item.id, text: input.value });
+      Object.assign(item, r);
+      if (tx.status === "new") {
+        const next = row.nextElementSibling?.querySelector("input");
+        row.remove(); tx.items = tx.items.filter((i) => i.id !== item.id);
+        next?.focus();
+      } else { row.className = "tx-row " + r.status; }
+      refreshTranscriptCounts();
+    } catch (e) { row.append(el("div", { class: "err" }, e.message)); }
+  };
+  save.addEventListener("click", submit);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); submit(); } });
+  const del = el("button", { class: "small danger", type: "button", title: "Delete clip", onclick: async () => {
+    try { await api("/api/transcripts/delete", { id: item.id }); row.remove(); refreshTranscriptCounts(); }
+    catch (e) { row.append(el("div", { class: "err" }, e.message)); } } }, "Delete");
+  const when = new Date(item.created_at * 1000).toLocaleString();
+  const reviewed = item.status === "new" ? "" : ` · ${item.status === "ok" ? "heard right" : "fixed"}`;
+  row.append(play, input, el("span", { class: "acts" }, save, " ", del),
+    el("div", { class: "meta" }, `${when} · ${item.source} · ${item.duration.toFixed(1)}s${reviewed}`));
+  if (item.text && item.text !== item.heard) row.append(el("div", { class: "heard" }, "Ifa heard: " + item.heard));
+  return row;
+}
+
+async function refreshTranscriptCounts() {
+  try { renderTranscriptCounts((await api("/api/transcripts?status=new&limit=1")).counts); } catch { /* ignore */ }
+}
+
+async function loadTranscripts(more = false) {
+  tx.loaded = true;
+  tx.status = $("tx-filter").value;
+  if (!more) { tx.offset = 0; tx.items = []; }
+  try {
+    const data = await api(`/api/transcripts?status=${tx.status}&limit=100&offset=${tx.offset}`);
+    tx.items.push(...data.items); tx.offset += data.items.length;
+    renderTranscriptCounts(data.counts);
+    const list = $("tx-list");
+    if (!more) list.replaceChildren();
+    list.append(...data.items.map(transcriptRow));
+    if (!tx.items.length) list.replaceChildren(el("p", { class: "hint" },
+      tx.status === "new" ? "Nothing to review. New clips appear here as you talk to Ifa." : "No clips here yet."));
+    $("tx-more").hidden = data.items.length < 100;
+  } catch (e) { banner("Couldn't load transcripts: " + e.message, "error"); }
+}
+
+$("tab-control").addEventListener("click", () => showView("control"));
+$("tab-transcripts").addEventListener("click", () => showView("transcripts"));
+$("tx-filter").addEventListener("change", () => loadTranscripts());
+$("tx-refresh").addEventListener("click", () => loadTranscripts());
+$("tx-more").addEventListener("click", () => loadTranscripts(true));
+$("tx-export").addEventListener("click", async () => {
+  const button = $("tx-export");
+  button.disabled = true;
+  try {
+    const r = await api("/api/transcripts/export", {});
+    banner(`Dataset frozen: ${r.train} train + ${r.test} test clips in ${r.path}`, "warn",
+      el("button", { class: "small", onclick: () => navigator.clipboard?.writeText(r.path) }, "Copy path"));
+  } catch (e) { banner("Couldn't freeze the dataset: " + e.message, "error"); }
+  button.disabled = false;
+});
+if (location.hash === "#transcripts") showView("transcripts");
+// endregion
 
 loadSettings().then(() => Promise.all([loadChecks(), loadSetup(), loadApps(), loadPrompts(), loadMemories()])).catch((e) => banner("Couldn't load settings: " + e.message, "error"));
 pollLogs();
