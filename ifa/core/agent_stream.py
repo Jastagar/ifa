@@ -64,6 +64,30 @@ ACTION_CLAIM_CORRECTION = (
 )
 
 
+HINDI_MARKERS = frozenset(
+    "hai hain ho tha thi the raha rahi rahe kar karo karna karta karti karte kya kyun kaise nahi nahin haan "
+    "theek thik accha achha acha bhai aap aapka aapki apka tum tumhara mera meri mere mujhe humko hamara abhi "
+    "kuch sab bas chalo gaya gayi diya kiya wala wali bhi koi kaun yeh woh yahan wahan zaroor bilkul ji".split())
+DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+ENGLISH_ONLY_CORRECTION = (
+    "[Ifa system note, not from the user: you answered in Hindi or Hinglish. Answer again in plain English "
+    "only. Keep names of songs, apps and people as they are.]"
+)
+
+
+def is_hinglish(sentence: str, allowed: frozenset[str] = frozenset()) -> bool:
+    """Hindi script, or two different Hindi grammar words that didn't come from a tool result (song titles)."""
+    if DEVANAGARI.search(sentence):
+        return True
+    words = set(re.findall(r"[a-z]+", sentence.lower())) - allowed
+    return len(words & HINDI_MARKERS) >= 2
+
+
+def _tool_words(messages: list[dict]) -> frozenset[str]:
+    return frozenset(w for m in messages if m.get("role") == "tool"
+                     for w in re.findall(r"[a-z]+", str(m.get("content") or "").lower()))
+
+
 def _new_nonce() -> str:
     return f"{TOOL_RESULT_MARKER}{uuid.uuid4().hex[:12]}"
 
@@ -140,6 +164,8 @@ def _stream_assistant_message(
     fabricated = False
     leaked = False
     claimed = False
+    hinglish = False
+    allowed = _tool_words(messages)
     first_checked = not guard_claims
     sentence_buffer = ""
     speech_parts: list[str] = []
@@ -169,11 +195,14 @@ def _stream_assistant_message(
         if leaked or TEXT_TOOL_CALL.search(full_text):
             leaked = True
             continue
-        if claimed:
+        if claimed or hinglish:
             continue
         sentence_buffer += content
         completed, sentence_buffer = _extract_chunks(sentence_buffer)
         for sentence in completed:
+            if is_hinglish(sentence, allowed):
+                hinglish = True
+                break
             if not first_checked:
                 first_checked = True
                 if ACTION_CLAIM.search(sentence):
@@ -187,15 +216,18 @@ def _stream_assistant_message(
                 _flush_speech_batch(speech_parts, on_sentence)
 
     tail = sentence_buffer.strip()
+    if tail and not fabricated and not leaked and not claimed and is_hinglish(tail, allowed):
+        hinglish = True
     if tail and not first_checked and ACTION_CLAIM.search(tail):
         claimed = True
-    if tail and not fabricated and not leaked and not claimed:
+    if tail and not fabricated and not leaked and not claimed and not hinglish:
         speech_parts.append(tail)
 
     timer.record_llm("llm", started_ms, first_chunk_ms, final_chunk, len(tool_calls))
     return (
         {"role": "assistant", "content": full_text, "tool_calls": tool_calls,
-         "fabricated": fabricated, "leaked": leaked and not tool_calls, "claimed": claimed and not tool_calls},
+         "fabricated": fabricated, "leaked": leaked and not tool_calls, "claimed": claimed and not tool_calls,
+         "hinglish": hinglish and not tool_calls},
         speech_parts,
     )
 
@@ -271,6 +303,14 @@ def agent_turn_stream(
             return fallback
 
         claimed = assistant_msg.pop("claimed")
+        if assistant_msg.pop("hinglish"):
+            print(f"[agent] reply wasn't in English, asking again: {assistant_msg['content'][:80]!r}")
+            if retries_remaining:
+                retries_remaining -= 1
+                messages.append({"role": "assistant", "content": assistant_msg["content"]})
+                messages.append({"role": "user", "content": ENGLISH_ONLY_CORRECTION})
+                continue
+            pending_speech = [assistant_msg["content"]]
         if assistant_msg.pop("leaked"):
             print(f"[agent] reply was a tool call written as text: {assistant_msg['content'][:80]!r}")
             if retries_remaining:

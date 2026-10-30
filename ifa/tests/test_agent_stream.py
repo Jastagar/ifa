@@ -82,6 +82,15 @@ class DirectResponseTests(AgentLoopTestCase):
         self.assertIsNotNone(llm.requests[0]["tools"])
 
 
+class EnglishOnlyTests(AgentLoopTestCase):
+    def test_hinglish_reply_is_never_spoken_and_asked_again(self):
+        spoken = []
+        llm = ScriptedLLM(_text("Haan sir, sab theek hai."), _text("All good, Sir."))
+        self.assertEqual(self.run_turn(llm, text="kya haal hai", spoken=spoken), "All good, Sir.")
+        self.assertEqual(spoken, ["All good, Sir."])
+        self.assertIn("English", llm.requests[1]["messages"][-1]["content"])
+
+
 class SilentFinishTests(AgentLoopTestCase):
     def test_a_tool_can_end_the_turn_without_a_reply(self):
         def play(args, ctx):
