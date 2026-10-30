@@ -72,6 +72,9 @@ SETTINGS = (
             ("en", "hi")),
     Setting("IFA_WHISPER_PROMPT", "Words to recognise", "listening", "text", "",
             "Optional names Whisper should spell right, e.g. Ifa, Spotify, YouTube, Sherlock."),
+    Setting("IFA_WHISPER_ADAPTER", "Voice adapter", "listening", "text", "",
+            "Folder of a speech-to-text adapter trained on your voice (python -m scripts.finetune_stt prints it). "
+            "Empty uses the plain model."),
     Setting("IFA_STT_COLLECT", "Save clips for review", "listening", "bool", "1",
             "Keep each clip Ifa transcribes (in stt_data/, never committed) for the Transcripts tab, "
             "so you can correct them and train speech-to-text on your voice."),

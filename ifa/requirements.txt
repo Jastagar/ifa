@@ -1,3 +1,4 @@
+accelerate==1.15.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
 aiosignal==1.4.0
@@ -44,6 +45,7 @@ nvidia-cublas-cu12>=12.4,<13.0; sys_platform == "win32" or sys_platform == "linu
 nvidia-cudnn-cu12>=9.0,<10.0; sys_platform == "win32" or sys_platform == "linux"
 onnxruntime==1.23.2
 openwakeword==0.6.0
+peft==0.21.2
 primp==2.0.1
 sherpa-onnx==1.13.8
 packaging

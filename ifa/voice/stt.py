@@ -57,6 +57,14 @@ def _load_model():
             low_cpu_mem_usage=True,
         )
 
+        adapter = os.environ.get("IFA_WHISPER_ADAPTER", "").strip()
+        if adapter:
+            # A LoRA adapter trained on Sir's voice (scripts/finetune_stt.py). Merging it into the weights
+            # makes transcription exactly as fast as without it.
+            from peft import PeftModel
+            _model = PeftModel.from_pretrained(_model, adapter).merge_and_unload()
+            print(f"[whisper] using the voice adapter {adapter}")
+
         _model.to(device)
         _model.eval()
 
