@@ -82,6 +82,25 @@ class DirectResponseTests(AgentLoopTestCase):
         self.assertIsNotNone(llm.requests[0]["tools"])
 
 
+class SilentFinishTests(AgentLoopTestCase):
+    def test_a_tool_can_end_the_turn_without_a_reply(self):
+        def play(args, ctx):
+            ctx.finish_silently = True
+            return "Playing Humdard by Arijit Singh on BROTON."
+        registry.register(_tool("spotify_control", play))
+        spoken = []
+        self.assertEqual(self.run_turn(ScriptedLLM(_calls(("spotify_control", {}))), spoken=spoken), "")
+        self.assertEqual(spoken, [])
+
+    def test_an_error_still_gets_a_reply(self):
+        def play(args, ctx):
+            ctx.finish_silently = True
+            return "ERROR: Spotify isn't open on any device."
+        registry.register(_tool("spotify_control", play))
+        llm = ScriptedLLM(_calls(("spotify_control", {})), _text("Spotify isn't open anywhere."))
+        self.assertEqual(self.run_turn(llm), "Spotify isn't open anywhere.")
+
+
 class TextToolCallTests(AgentLoopTestCase):
     def test_tool_call_written_as_text_is_never_spoken(self):
         spoken = []

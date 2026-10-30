@@ -20,14 +20,26 @@ def _handler(args: dict, ctx: AgentContext) -> str:
             return "ERROR: search needs a query."
         return spotify.search(args["query"], args.get("artist"))
     if action == "play":
-        return spotify.play(args.get("query"), args.get("choice"), args.get("artist"))
+        return _quietly(spotify.play(args.get("query"), args.get("choice"), args.get("artist")), ctx, music_on=True)
     if action == "pause":
-        return spotify.pause()
+        return _quietly(spotify.pause(), ctx, music_on=False)
     if action == "now_playing":
         return spotify.now_playing()
     if action == "next":
-        return spotify.next()
+        return _quietly(spotify.next(), ctx, music_on=True)
     return "Invalid action"
+
+
+SUCCESS = ("Playing ", "Resumed ", "Paused", "Skipped ")
+
+
+def _quietly(result: str, ctx: AgentContext, music_on: bool) -> str:
+    # The music starting or stopping is the answer, so Ifa says nothing after it. With music on she also
+    # stops listening for a follow-up, which would only hear the song. Failures still go back to the model.
+    if result.startswith(SUCCESS):
+        ctx.finish_silently = True
+        ctx.end_conversation = ctx.end_conversation or music_on
+    return result
 
 
 TOOL = Tool(

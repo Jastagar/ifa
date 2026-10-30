@@ -19,3 +19,4 @@ class AgentContext:
     user_text: str = ""
     end_conversation: bool = False
     restart_requested: bool = False
+    finish_silently: bool = False

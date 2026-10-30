@@ -245,6 +245,7 @@ def agent_turn_stream(
 ) -> str:
     ctx.turn += 1
     ctx.user_text = user_text
+    ctx.finish_silently = False
     nonce = _new_nonce()
     messages = _build_messages(user_text, ctx, memory, nonce)
     tool_hops = 0
@@ -320,6 +321,12 @@ def agent_turn_stream(
             messages.append(assistant_msg)
             results = _append_tool_results(messages, tool_calls, ctx, nonce)
             steps.extend(tool_step(assistant_msg, results))
+            if ctx.finish_silently and not any(r.startswith("ERROR") for _, r in results):
+                # A tool whose effect is the answer (music starting): end the turn without a reply.
+                done = "\n".join(r for _, r in results)
+                print(f"[agent] finished silently: {done}")
+                memory.add_turn(user_text, steps, done)
+                return ""
             direct = _direct_answer(results)
             if direct is not None:
                 if on_sentence:
