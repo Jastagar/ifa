@@ -49,24 +49,14 @@ def load_split(folder: Path) -> list[tuple[np.ndarray, str]]:
     return clips
 
 
-def normalize_text(text: str) -> list[str]:
-    return re.sub(r"[^\w\s']", " ", text.lower()).split()
-
-
-def word_errors(ref: list[str], hyp: list[str]) -> int:
-    """Word-level edit distance (substitutions + insertions + deletions)."""
-    row = list(range(len(hyp) + 1))
-    for i, r in enumerate(ref, 1):
-        prev, row[0] = row[0], i
-        for j, h in enumerate(hyp, 1):
-            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (r != h))
-    return row[-1]
+def normalize_text(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s']", " ", text.lower()).split())
 
 
 def wer(refs: list[str], hyps: list[str]) -> float:
-    words = sum(len(normalize_text(r)) for r in refs)
-    errors = sum(word_errors(normalize_text(r), normalize_text(h)) for r, h in zip(refs, hyps))
-    return errors / max(words, 1)
+    import jiwer
+
+    return jiwer.wer([normalize_text(r) or "-" for r in refs], [normalize_text(h) for h in hyps])
 
 
 def pick_device(choice: str) -> str:

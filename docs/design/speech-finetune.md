@@ -43,7 +43,7 @@ flowchart LR
 - **A held-out test set as the gate.** The adapter is saved only if it beats the current model on clips it never trained on. Training loss always goes down; that alone proves nothing.
 - **Same settings as Ifa.** Training and evaluation use the `en` language token and the same model, so the measured gain is the gain you'll hear.
 - **Merged at load.** `merge_and_unload()` folds the adapter into the weights, so transcription is exactly as fast as before.
-- **Plain PyTorch loop.** No `datasets`/`Trainer` stack: the only extra packages are `peft` and `accelerate`.
+- **Plain PyTorch loop.** No `datasets`/`Trainer` stack: the extra packages are `peft`, `accelerate` and `jiwer` (the standard word-error-rate library).
 
 ## Settings for the script
 
