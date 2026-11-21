@@ -30,3 +30,16 @@ class PhraseBatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamingSplitTests(unittest.TestCase):
+    def test_streamed_text_never_breaks_inside_numbers_or_abbreviations(self):
+        from ifa.utils.sentences import take_complete
+        reply = "The driver is 572.60, out since Feb. 2025. Dr. Rao called at 3 p.m. today. Done!"
+        buf, spoken = "", []
+        for i in range(0, len(reply), 3):
+            done, buf = take_complete(buf + reply[i:i + 3])
+            spoken += done
+        spoken.append(buf.strip())
+        self.assertEqual(spoken, ["The driver is 572.60, out since Feb. 2025.",
+                                  "Dr. Rao called at 3 p.m. today.", "Done!"])

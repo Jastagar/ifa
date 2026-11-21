@@ -17,6 +17,7 @@ from ifa.services.ollama_client import (
 from ifa.skills.vibe.vibe import VibeManager
 from ifa.tools import registry
 from ifa.utils import latency
+from ifa.utils.sentences import take_complete
 
 MODEL = OLLAMA_MODEL
 
@@ -90,36 +91,6 @@ def _tool_words(messages: list[dict]) -> frozenset[str]:
 
 def _new_nonce() -> str:
     return f"{TOOL_RESULT_MARKER}{uuid.uuid4().hex[:12]}"
-
-
-def _extract_chunks(buffer: str):
-    matches = list(
-        re.finditer(r'[^.!?]+[.!?]', buffer)
-    )
-
-    completed = []
-
-    last_end = 0
-
-    for m in matches:
-        completed.append(
-            m.group(0).strip()
-        )
-        last_end = m.end()
-
-    remaining = buffer[last_end:]
-
-    if len(remaining.split()) >= 12:
-        split_idx = remaining.rfind(" ")
-
-        if split_idx > 0:
-            completed.append(
-                remaining[:split_idx].strip()
-            )
-
-            remaining = remaining[split_idx:].strip()
-
-    return completed, remaining
 
 
 def _flush_speech_batch(parts: list[str], on_sentence) -> None:
@@ -198,7 +169,7 @@ def _stream_assistant_message(
         if claimed or hinglish:
             continue
         sentence_buffer += content
-        completed, sentence_buffer = _extract_chunks(sentence_buffer)
+        completed, sentence_buffer = take_complete(sentence_buffer)
         for sentence in completed:
             if is_hinglish(sentence, allowed):
                 hinglish = True

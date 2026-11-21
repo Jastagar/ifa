@@ -124,6 +124,7 @@ pyperclip==1.11.0
 pypiwin32==223
 pyreadline3==3.5.4
 pyrect==0.2.0
+pysbd==0.3.4
 pyscreeze==1.0.1
 python-dateutil==2.9.0.post0
 python-discovery==1.6.4

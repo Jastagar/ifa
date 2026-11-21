@@ -48,6 +48,7 @@ onnxruntime==1.23.2
 openwakeword==0.6.0
 peft==0.21.2
 primp==2.0.1
+pysbd==0.3.4
 sherpa-onnx==1.13.8
 packaging
 propcache==0.4.1
