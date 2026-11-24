@@ -15,6 +15,7 @@ The easiest way to configure and run Ifa:
 
 - **macOS**: double-click `run-launcher.command`
 - **Windows**: double-click `run-launcher.bat`
+- **Claude Code announcements**: register `scripts/claude_hook.py` as a Stop and Notification hook (see the top of the file) and put the PC address and phone pairing code in `~/.ifa/claude_hook.json`. Ifa then says when a session finishes or needs you.
 - **Transcripts tab**: every clip Ifa transcribes is saved (in `stt_data/`, never committed). Fix the text there; Freeze dataset exports the reviewed clips for fine-tuning speech-to-text on your voice.
 - **From another device on your network**: use `run-launcher-lan.bat` (or `--lan`). It prints a link with an access key and opens Ollama on the network too.
 - or: `python -m launcher` (add `--port 8790` / `--no-browser`)
