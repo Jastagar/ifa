@@ -12,7 +12,7 @@ from typing import Callable
 import numpy as np
 
 from ifa.services.notifications import URGENT_ANNOUNCEMENT, parse_settings
-from ifa.services import transcripts
+from ifa.services import announcements, transcripts
 from ifa.services.pairing import lan_address, load_pairing_code
 
 PROTOCOL_VERSION = 1
@@ -119,6 +119,7 @@ class PhoneSession:
         self._capturing = False
         self._cancelled = False
         self._pending_nudge: str | None = None
+        self._pending_says: list[str] = []
         self._enroll_samples: list[np.ndarray] | None = None
         self._enroll_capture = False
 
@@ -138,10 +139,14 @@ class PhoneSession:
     def finish_turn(self, followup: bool = True) -> None:
         with self._lock:
             nudge, self._pending_nudge = self._pending_nudge, None
-            if nudge is None:
+            say = self._pending_says.pop(0) if nudge is None and self._pending_says else None
+            if nudge is None and say is None:
                 self._busy = False
         if nudge is not None:
             self._run_nudge(nudge)
+            return
+        if say is not None:
+            self._run_say(say)
             return
         self._expect_reply = followup and self.server.followup_sec > 0
         self.send_json({
@@ -158,6 +163,29 @@ class PhoneSession:
                 return
             self._busy = True
         self._run_nudge(level)
+
+    def say(self, text: str) -> None:
+        """Speak an announcement on the phone, after the current turn if one is running."""
+        with self._lock:
+            if self._busy:
+                self._pending_says.append(text)
+                return
+            self._busy = True
+        self._run_say(text)
+
+    def _run_say(self, text: str) -> None:
+        def run() -> None:
+            try:
+                self.send_reply(text)
+                phone_tts = PhoneTTS(self.server.tts, self)
+                phone_tts.enqueue(text)
+                phone_tts.wait_until_done()
+            except Exception as exc:
+                print(f"[phone] couldn't play the announcement: {exc}")
+            finally:
+                self.finish_turn(followup=False)
+
+        threading.Thread(target=run, name="ifa-phone-say", daemon=True).start()
 
     def greet(self, text: str, clip) -> None:
         if not self._begin():
@@ -491,6 +519,7 @@ class PhoneServer:
         self.urgent_clip = urgent_clip or (lambda: None)
         self.greeting = greeting
         self.on_greet = on_greet or (lambda: None)
+        self.on_announce: Callable[[dict], None] | None = None
         self.greeting_clip = greeting_clip or (lambda: None)
         self.greet_after_sec = float(os.environ.get("IFA_PHONE_GREETING_AFTER_MIN", "0")) * 60
         self._last_disconnect: float | None = None
@@ -553,6 +582,14 @@ class PhoneServer:
             return False
         print(f"[phone] {level} notification: nudging the phone")
         session.nudge(level)
+        return True
+
+    def say(self, text: str) -> bool:
+        with self._sessions_lock:
+            session = self._sessions[-1] if self._sessions else None
+        if session is None:
+            return False
+        session.say(text)
         return True
 
     def receive_notification(self, message: dict) -> None:
@@ -652,6 +689,7 @@ class PhoneServer:
         app = web.Application()
         app.router.add_get("/phone/health", self._health)
         app.router.add_get("/phone", self._websocket)
+        app.router.add_post("/announce", self._announce)
         runner = web.AppRunner(app, access_log=None)
         try:
             loop.run_until_complete(runner.setup())
@@ -667,6 +705,22 @@ class PhoneServer:
     async def _health(self, request):
         from aiohttp import web
         return web.json_response({"status": "ok", "name": self.name, "version": PROTOCOL_VERSION})
+
+    async def _announce(self, request):
+        """Something outside Ifa (a Claude Code hook) wants her to say something. Needs the pairing code."""
+        from aiohttp import web
+
+        status = self.check_pairing(request.remote or "?", request.headers.get("X-IFA-Token", ""))
+        if status != 200:
+            return web.json_response({"error": "wrong pairing code" if status == 401 else "wait a minute"}, status=status)
+        try:
+            event = announcements.parse(await request.json())
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        if self.on_announce is None:
+            return web.json_response({"error": "announcements are off"}, status=503)
+        threading.Thread(target=self.on_announce, args=(event,), name="ifa-announce", daemon=True).start()
+        return web.json_response({"ok": True}, status=202)
 
     async def _websocket(self, request):
         from aiohttp import WSMsgType, web

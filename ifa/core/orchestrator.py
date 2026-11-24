@@ -12,6 +12,7 @@ from ifa.core.agent_stream import (
 from ifa.core.context import AgentContext
 from ifa.core.dismiss import is_dismissal
 from ifa.core.memory import Memory
+from ifa.services import announcements
 from ifa.services.db import DB_PATH, init_db
 from ifa.services.notification_history import NotificationHistory
 from ifa.services.fillers import Fillers, generic_phrases
@@ -295,6 +296,18 @@ def run() -> None:
     )
     if phones is not None:
         input_mode.pause_while(phones.has_priority)
+
+        def announce(event: dict) -> None:
+            # A Claude Code session finished or needs Sir (scripts/claude_hook.py): say it on the phone after
+            # any turn in progress, or on the PC once it's quiet.
+            text = announcements.spoken_text(event, chat, MODEL)
+            print(f"[announce] {text}")
+            if phones.say(text):
+                return
+            _wait_until_quiet(speech_queue, tts)
+            speech_queue.enqueue(text)
+
+        phones.on_announce = announce
 
     while True:
         raw_input, phone = turns.get()
