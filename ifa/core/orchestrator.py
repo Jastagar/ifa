@@ -305,6 +305,7 @@ def run() -> None:
             if phones.say(text):
                 return
             _wait_until_quiet(speech_queue, tts)
+            print("[announce] saying it on the PC speakers")
             speech_queue.enqueue(text)
 
         phones.on_announce = announce

@@ -169,8 +169,10 @@ class PhoneSession:
         with self._lock:
             if self._busy:
                 self._pending_says.append(text)
+                print(f"[announce] on the phone after the current turn ({len(self._pending_says)} waiting)")
                 return
             self._busy = True
+        print("[announce] saying it on the phone")
         self._run_say(text)
 
     def _run_say(self, text: str) -> None:

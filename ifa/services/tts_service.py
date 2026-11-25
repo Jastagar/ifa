@@ -5,8 +5,6 @@ import time
 import numpy as np
 import sounddevice as sd
 import torch
-import contextlib
-import io
 os.environ["TQDM_DISABLE"] = "1"
 
 import perth
@@ -109,13 +107,14 @@ class TTSService:
         return int(self.model.sr)
 
     def _generate(self, sentence: str) -> np.ndarray:
+        # No stdout/stderr redirect here: it is process-wide, so it swallowed every line any other thread
+        # printed while speech was generated ("[phone] connected", startup lines). Progress bars are
+        # already off through TQDM_DISABLE above.
         with self._model_lock:
-            with contextlib.redirect_stdout(io.StringIO()):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    wav = self.model.generate(
-                        sentence,
-                        audio_prompt_path=self.voice_path
-                    )
+            wav = self.model.generate(
+                sentence,
+                audio_prompt_path=self.voice_path
+            )
         return (
             wav.squeeze()
             .detach()
