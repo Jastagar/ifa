@@ -12,17 +12,24 @@ Settings in ~/.ifa/claude_hook.json (or the IFA_URL / IFA_TOKEN environment vari
 
     {"url": "http://192.168.1.15:8789", "token": "<the phone pairing code>", "skip_projects": []}
 
+If the saved address stops answering, the hook finds Ifa again with the same LAN discovery the phone app
+uses (UDP 8788) and saves the new address.
+
 Standard library only. It always exits 0 and prints nothing, so it can never block or change Claude.
 """
 from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 CONFIG = Path.home() / ".ifa" / "claude_hook.json"
+DISCOVERY_PORT = 8788  # Ifa answers this probe on the LAN; the phone app finds her the same way
+DISCOVERY_PROBE = b"IFA_DISCOVER_V1"
 # Notification types worth saying out loud. idle_prompt is skipped: it repeats the Stop announcement a minute later.
 NEEDS_YOU = {
     "permission_prompt": "needs your permission",
@@ -47,6 +54,27 @@ def event_for(hook: dict) -> dict | None:
     return None
 
 
+def discover(timeout: float = 2.0) -> str | None:
+    """Find Ifa on the local network (the PC's address changes when the router hands out a new one)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(timeout)
+        sock.sendto(DISCOVERY_PROBE, ("255.255.255.255", DISCOVERY_PORT))
+        try:
+            data, (host, _) = sock.recvfrom(1024)
+        except socket.timeout:
+            return None
+    reply = json.loads(data)
+    return f"http://{host}:{reply.get('port') or 8789}" if reply.get("service") == "ifa" else None
+
+
+def post(url: str, event: dict, token: str) -> None:
+    request = urllib.request.Request(
+        url.rstrip("/") + "/announce", data=json.dumps(event).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "X-IFA-Token": token})
+    urllib.request.urlopen(request, timeout=4).close()  # Ifa answers at once and summarises afterwards
+
+
 def main() -> int:
     try:
         hook = json.load(sys.stdin)
@@ -56,10 +84,18 @@ def main() -> int:
         event = event_for(hook)
         if event is None or event["project"] in set(config.get("skip_projects") or []):
             return 0
-        request = urllib.request.Request(
-            url.rstrip("/") + "/announce", data=json.dumps(event).encode("utf-8"), method="POST",
-            headers={"Content-Type": "application/json", "X-IFA-Token": token})
-        urllib.request.urlopen(request, timeout=10).close()
+        try:
+            post(url, event, token)
+        except urllib.error.HTTPError:
+            raise  # Ifa answered (e.g. wrong code): the address is fine
+        except OSError:
+            found = None if os.environ.get("IFA_URL") else discover()
+            if not found or found == url:
+                raise
+            post(found, event, token)
+            config["url"] = found  # remember the new address for next time
+            CONFIG.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG.write_text(json.dumps(config, indent=2), encoding="utf-8")
     except Exception as exc:  # Ifa off, wrong code, no network: never bother Claude with it
         log = CONFIG.parent / "claude_hook.log"
         try:
