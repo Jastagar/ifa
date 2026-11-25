@@ -422,3 +422,19 @@ class ActionClaimPatternTests(unittest.TestCase):
         for text in ("All good, Sir. How about you?", "It's 4:35 PM, Sir.", "A black hole is a region of space.",
                      "I'll need the time for that reminder, Sir.", "Who should I send it to?"):
             self.assertFalse(agent_stream.ACTION_CLAIM.search(text), text)
+
+
+class IntentHintTests(unittest.TestCase):
+    def test_screen_vs_heard_vs_neither(self):
+        from ifa.core.agent_stream import _intent_hint
+        from ifa.core.memory import Memory
+        expect = {
+            "What's on my screen?": "analyze_screen", "Read this error for me": "analyze_screen",
+            "Summarise this page": "analyze_screen", "What did he just say?": "recall_recent_audio",
+            "Is that true what they said on TV?": "recall_recent_audio", "Is it true?": "recall_recent_audio",
+            "Explain that": "recall_recent_audio", "Read my notifications": None, "Call mom": None,
+            "Play the song Humdard": None, "Remind me about this tomorrow": None, "What's on TV tonight?": None,
+        }
+        for text, tool in expect.items():
+            hint = _intent_hint(text, Memory())
+            self.assertEqual(tool in hint if tool else hint == "", True, text)

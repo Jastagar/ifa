@@ -14,25 +14,12 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 TOOL = Tool(
     name="analyze_screen",
     description=(
-        """
-Use this tool whenever answering the user's request requires seeing
-their screen.
-
-Examples:
-- What error is on my screen?
-- Read this popup.
-- What am I looking at?
-- What application is open?
-- Explain what is visible.
-- Describe this window.
-- What button should I click?
-
-You MUST call this tool before answering any question that depends on
-visual information from the user's screen.
-
-If you answer without calling this tool when vision is required,
-your response is invalid.
-        """
+        "Look at Sir's PC screen (a screenshot) and answer about what is SHOWN: text, errors, windows, pages, "
+        "images, buttons. Use it when he talks about seeing or reading: 'what's on my screen', 'read this', "
+        "'this error', 'what am I looking at', 'which button'. For something he HEARD (people talking, TV, a video, "
+        "a call, 'what did he say'), use recall_recent_audio instead. If it's unclear whether he means something "
+        "seen or heard ('is it true?', 'explain that'), try recall_recent_audio first and use this only if that "
+        "found no speech."
     ),
     parameters={
         "type": "object",

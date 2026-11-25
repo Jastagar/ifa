@@ -34,10 +34,12 @@ def _handler(args: dict, ctx: AgentContext) -> str:
 TOOL = Tool(
     name="recall_recent_audio",
     description=(
-        "Hear what was said around Sir in the last ~30 seconds before he spoke to you: TV, a video, a call, "
-        "people nearby. Use it when he refers to something he just heard, e.g. 'is it true?', "
-        "'what did he say?', 'summarise that'. For fact checks, follow with search_web. "
-        "Never use it for ordinary requests."
+        "Hear what was SAID around Sir in the ~30 seconds before he spoke to you: TV, a video, a call, people "
+        "nearby. Use it when he talks about hearing: 'what did he say', 'is that true' about a claim, 'summarise "
+        "that', 'what was that song'. For something SHOWN on his screen ('read this', 'this error', 'what's on my "
+        "screen'), use analyze_screen instead. If it's unclear whether he means something seen or heard, use this "
+        "first, and analyze_screen only if it found no speech. For fact checks, follow with search_web. Never use "
+        "it for ordinary requests."
     ),
     parameters={"type": "object", "properties": {}, "additionalProperties": False},
     handler=_handler,

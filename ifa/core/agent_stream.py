@@ -117,11 +117,38 @@ def _date_note() -> str:
     return f"[Today is {time.strftime('%A, %d %B %Y')}.]\n"
 
 
+# Phrases, not single words: "read my notifications", "call mom" and "play the song X" must not match.
+SEEN = re.compile(
+    r"\b(on|at|in) (my|the) (screen|monitor|display)\b|\bmy screen\b"
+    r"|\b(this|that|the) (page|window|error|popup|pop up|chart|graph|image|picture|photo|button|tab|code|website)\b"
+    r"|\bread (this|that|it)\b|\blooking at\b|\bwhich button\b")
+HEARD = re.compile(
+    r"\b(he|she|they|you|someone|somebody|that guy|the guy|the man|the woman)( just)? "
+    r"(said|say|says|saying|mentioned|claimed|told)\b"
+    r"|\b(i )?(just )?(heard|hearing)\b|\b(on|in) (the )?(video|call|podcast)\b"
+    r"|\b(that|this) (song|track|tune)\b|\bwhat (song|track) (was|is) (that|this|playing)\b"
+    r"|\bwhat did (he|she|they|you) (just )?say\b|\btalking about\b")
+VAGUE = re.compile(r"^(is (it|that|this) (true|right|real|correct)|explain (that|this|it)"
+                   r"|what'?s? (is )?(this|that) about|what was (that|this)|is that so)\W*$")
+
+
+def _intent_hint(user_text: str, memory: Memory) -> str:
+    """Point the model at the screen or at recent audio; a 9B model mixed them up from descriptions alone."""
+    text = " ".join(user_text.lower().split())
+    if SEEN.search(text):
+        target = ("something on his PC screen", "analyze_screen")
+    elif HEARD.search(text) or (VAGUE.search(text) and not memory.recent()):
+        target = ("something he just heard (TV, a video, people talking)", "recall_recent_audio")
+    else:
+        return ""
+    return f"[Ifa system note, not from the user: he is probably asking about {target[0]}; call {target[1]}.]\n"
+
+
 def _build_messages(user_text: str, ctx: AgentContext, memory: Memory, nonce: str) -> list[dict]:
     return [
         {"role": "system", "content": _build_system_prompt(nonce, ctx.db_path)},
         *memory.recent(),
-        {"role": "user", "content": _date_note() + _notification_hint(ctx) + user_text},
+        {"role": "user", "content": _date_note() + _notification_hint(ctx) + _intent_hint(user_text, memory) + user_text},
     ]
 
 
