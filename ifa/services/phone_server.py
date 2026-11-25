@@ -320,6 +320,8 @@ class PhoneSession:
             self._enroll_samples = None
         elif kind == "enroll_forget":
             self._in_thread(self._forget_voice)
+        elif kind == "log":
+            print(f"[phone app] {' '.join(str(message.get('text') or '').split())[:300]}")
         elif kind == "recall_audio":
             self._take_recall(message)
         elif kind == "ping":
