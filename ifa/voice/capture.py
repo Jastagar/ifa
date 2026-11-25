@@ -30,7 +30,9 @@ def _load_vad():
 
 
 def _speech_prob_via_vad(vad, chunk_f32: np.ndarray) -> float:
-    arr = vad(chunk_f32)
+    # faster-whisper's SileroVADModel zeroes the last 64 samples of the array it's given, in place (it's built
+    # for whole files). On live chunks that punched a 4 ms hole every 32 ms into everything Ifa heard. Copy.
+    arr = vad(chunk_f32.copy())
     return float(arr[0])
 
 

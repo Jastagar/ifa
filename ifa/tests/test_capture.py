@@ -216,3 +216,15 @@ class CaptureFallbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaptureKeepsAudioIntactTests(unittest.TestCase):
+    def test_the_real_vad_does_not_punch_holes_in_the_captured_audio(self):
+        # faster-whisper's Silero VAD zeroes the last 64 samples of its input in place; capture must copy.
+        rng = np.random.default_rng(0)
+        audio = (rng.standard_normal(CAPTURE_SAMPLES * 30) * 0.1).astype(np.float32)
+        chunks = iter(np.split(audio.copy(), 30))
+        read = lambda: next(chunks, np.zeros(CAPTURE_SAMPLES, np.float32))
+        out = capture_utterance(read, silence_ms=60_000, max_utterance_ms=300)
+        self.assertGreaterEqual(len(out), len(audio))
+        self.assertTrue(np.array_equal(out[:len(audio)], audio), "captured audio was changed")
