@@ -5,7 +5,6 @@ import time
 import numpy as np
 import sounddevice as sd
 import torch
-os.environ["TQDM_DISABLE"] = "1"
 
 import perth
 

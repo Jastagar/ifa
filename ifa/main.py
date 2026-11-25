@@ -2,6 +2,10 @@ import os
 import pathlib
 import sys
 
+from ifa.utils import quiet
+
+quiet.install()  # before anything imports tqdm
+
 from ifa.supervisor import is_supervised, supervise
 
 if __name__ == "__main__" and not is_supervised():
