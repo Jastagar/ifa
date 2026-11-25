@@ -75,6 +75,20 @@ SETTINGS = (
     Setting("IFA_WHISPER_ADAPTER", "Voice adapter", "listening", "text", "",
             "Folder of a speech-to-text adapter trained on your voice (python -m scripts.finetune_stt prints it). "
             "Empty uses the plain model."),
+    Setting("IFA_PHONE_MIC_SOURCE", "Phone mic source", "notifications", "select", "voice_communication",
+            "How the phone records. voice_communication: call quality, with the phone's own noise filters "
+            "(best in most rooms). voice_recognition: lighter processing, often near raw. mic: plain. unprocessed: "
+            "raw, if the phone supports it. camcorder: tuned for distant sound (TV). Listen to clips in the "
+            "Transcripts tab to compare. Applies when the phone reconnects.",
+            options=("voice_communication", "voice_recognition", "mic", "unprocessed", "camcorder")),
+    Setting("IFA_PHONE_NOISE_SUPPRESSION", "Phone noise suppression", "notifications", "bool", "1",
+            "Android's noise suppressor on the phone mic, where the phone has one."),
+    Setting("IFA_PHONE_ECHO_CANCEL", "Phone echo cancelling", "notifications", "bool", "1",
+            "Removes Ifa's own voice from the phone mic while she speaks."),
+    Setting("IFA_PHONE_AUTO_GAIN", "Phone auto gain", "notifications", "bool", "1",
+            "Android levels your voice automatically. Turn off if quiet rooms sound hissy."),
+    Setting("IFA_PHONE_MIC_BOOST", "Phone mic boost", "notifications", "text", "",
+            "Extra digital boost, 1-16. Empty: learned from how loud you speak. Too high amplifies noise."),
     Setting("IFA_RECALL_SEC", "Recent-audio memory (s)", "listening", "number", "30",
             "Seconds the phone keeps in memory (never saved) so you can ask \"is that true?\" about something "
             "you just heard. 0 turns it off. Applies when the phone reconnects.", minimum=0, maximum=120),

@@ -658,6 +658,7 @@ class PhoneServer:
             "followupSec": self.followup_sec,
             "voiceSources": self.speaker.enrolled_sources,
             "recallSec": recall_seconds(),
+            "audio": phone_audio_settings(),
         }
 
     def dump_wav(self, audio: np.ndarray) -> None:
@@ -866,6 +867,29 @@ def _quiet_connection_errors(loop, context: dict) -> None:
 
 def greeting_text() -> str:
     return os.environ.get("IFA_PHONE_GREETING", "Hello sir, I am live, welcome home").strip()
+
+
+MIC_SOURCES = ("voice_communication", "voice_recognition", "mic", "unprocessed", "camcorder")
+
+
+def _on(key: str) -> bool:
+    return os.environ.get(key, "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def phone_audio_settings() -> dict:
+    """The phone mic setup, chosen in the launcher and applied by the app when it connects."""
+    source = os.environ.get("IFA_PHONE_MIC_SOURCE", "").strip().lower()
+    try:
+        boost = min(16.0, max(1.0, float(os.environ.get("IFA_PHONE_MIC_BOOST", ""))))
+    except ValueError:
+        boost = 0.0  # 0 = let the app learn it
+    return {
+        "source": source if source in MIC_SOURCES else "voice_communication",
+        "noiseSuppression": _on("IFA_PHONE_NOISE_SUPPRESSION"),
+        "echoCancel": _on("IFA_PHONE_ECHO_CANCEL"),
+        "autoGain": _on("IFA_PHONE_AUTO_GAIN"),
+        "boost": boost,
+    }
 
 
 def recall_seconds() -> int:
