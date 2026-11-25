@@ -120,6 +120,8 @@ class PhoneSession:
         self._cancelled = False
         self._pending_nudge: str | None = None
         self._pending_says: list[str] = []
+        self._recall_id = 0
+        self._recall_wait: tuple[int, threading.Event, list] | None = None
         self._enroll_samples: list[np.ndarray] | None = None
         self._enroll_capture = False
 
@@ -163,6 +165,29 @@ class PhoneSession:
                 return
             self._busy = True
         self._run_nudge(level)
+
+    def request_recall(self, timeout: float = 8.0) -> np.ndarray | None:
+        """Ask the phone for the audio it heard just before Sir spoke (its in-memory recall buffer)."""
+        with self._lock:
+            self._recall_id += 1
+            request = (self._recall_id, threading.Event(), [])
+            self._recall_wait = request
+        self.send_json({"type": "recall_request", "id": request[0]})
+        if not request[1].wait(timeout):
+            return None
+        return request[2][0] if request[2] else None
+
+    def _take_recall(self, message: dict) -> None:
+        import base64
+
+        with self._lock:
+            waiting = self._recall_wait
+        if waiting is None or message.get("id") != waiting[0]:
+            return
+        pcm = base64.b64decode(str(message.get("pcm") or ""))
+        usable = len(pcm) - len(pcm) % 2
+        waiting[2].append(np.frombuffer(pcm[:usable], dtype="<i2").astype(np.float32) / 32768.0)
+        waiting[1].set()
 
     def say(self, text: str) -> None:
         """Speak an announcement on the phone, after the current turn if one is running."""
@@ -295,6 +320,8 @@ class PhoneSession:
             self._enroll_samples = None
         elif kind == "enroll_forget":
             self._in_thread(self._forget_voice)
+        elif kind == "recall_audio":
+            self._take_recall(message)
         elif kind == "ping":
             self.send_json({"type": "pong"})
         else:
@@ -586,6 +613,10 @@ class PhoneServer:
         session.nudge(level)
         return True
 
+    def latest_session(self) -> "PhoneSession | None":
+        with self._sessions_lock:
+            return self._sessions[-1] if self._sessions else None
+
     def say(self, text: str) -> bool:
         with self._sessions_lock:
             session = self._sessions[-1] if self._sessions else None
@@ -626,6 +657,7 @@ class PhoneServer:
             "wakeConsecutive": int(os.environ.get("IFA_WAKE_CONSECUTIVE", "2")),
             "followupSec": self.followup_sec,
             "voiceSources": self.speaker.enrolled_sources,
+            "recallSec": recall_seconds(),
         }
 
     def dump_wav(self, audio: np.ndarray) -> None:
@@ -742,7 +774,8 @@ class PhoneServer:
 
         # Ifa pings every 30 s and waits 15 s for the pong. Phones in Wi-Fi power saving (screen off) can hold
         # packets for several seconds, and the old 7.5 s wait dropped healthy connections.
-        ws = web.WebSocketResponse(heartbeat=HEARTBEAT_SEC, max_msg_size=1 << 20)
+        # 8 MB: a recall clip (up to 120 s of 16 kHz audio, base64) is far bigger than anything else sent.
+        ws = web.WebSocketResponse(heartbeat=HEARTBEAT_SEC, max_msg_size=8 << 20)
         await ws.prepare(request)
         session = PhoneSession(self, asyncio.get_running_loop(), peer)
         writer = asyncio.create_task(session.run_writer(ws))
@@ -835,15 +868,27 @@ def greeting_text() -> str:
     return os.environ.get("IFA_PHONE_GREETING", "Hello sir, I am live, welcome home").strip()
 
 
+def recall_seconds() -> int:
+    try:
+        return max(0, min(120, int(float(os.environ.get("IFA_RECALL_SEC", "30")))))
+    except ValueError:
+        return 30
+
+
+ACTIVE: "PhoneServer | None" = None  # for tools that need the connected phone (recall_recent_audio)
+
+
 def start_phone_server(submit, tts, notifications=None, urgent_clip=None, greeting_clip=None,
                        on_greet=None) -> PhoneServer | None:
     if not phone_enabled():
         print("[phone] phone app connection disabled (IFA_PHONE_ENABLED=0)")
         return None
+    global ACTIVE
     try:
-        return PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip,
-                           greeting_clip=greeting_clip, greeting=greeting_text(),
-                           on_greet=on_greet).start()
+        ACTIVE = PhoneServer(submit, tts, notifications, urgent_clip=urgent_clip,
+                             greeting_clip=greeting_clip, greeting=greeting_text(),
+                             on_greet=on_greet).start()
+        return ACTIVE
     except Exception as exc:
         print(f"[phone] could not start the phone server: {exc}")
         return None

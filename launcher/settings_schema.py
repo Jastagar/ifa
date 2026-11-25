@@ -75,6 +75,9 @@ SETTINGS = (
     Setting("IFA_WHISPER_ADAPTER", "Voice adapter", "listening", "text", "",
             "Folder of a speech-to-text adapter trained on your voice (python -m scripts.finetune_stt prints it). "
             "Empty uses the plain model."),
+    Setting("IFA_RECALL_SEC", "Recent-audio memory (s)", "listening", "number", "30",
+            "Seconds the phone keeps in memory (never saved) so you can ask \"is that true?\" about something "
+            "you just heard. 0 turns it off. Applies when the phone reconnects.", minimum=0, maximum=120),
     Setting("IFA_STT_COLLECT", "Save clips for review", "listening", "bool", "1",
             "Keep each clip Ifa transcribes (in stt_data/, never committed) for the Transcripts tab, "
             "so you can correct them and train speech-to-text on your voice."),
